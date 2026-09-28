@@ -33,7 +33,9 @@ cp "$RELEASE_BIN" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 echo "🎨 [3/4] Memasang AppIcon.icns..."
-if [ -f "$PROJECT_DIR/AppIcon.icns" ]; then
+if [ -f "$PROJECT_DIR/Assets/AppIcon.icns" ]; then
+    cp "$PROJECT_DIR/Assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+elif [ -f "$PROJECT_DIR/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 fi
 
