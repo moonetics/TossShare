@@ -14,8 +14,10 @@ public enum TossShareCore {
 
     /// Tipe layanan mDNS standar untuk protokol Google/Samsung Quick Share.
     public static let mdnsServiceType = "_FC9F5ED42C8A._tcp."
+    public static let quickShareMDNSServiceType = mdnsServiceType
 
     /// UUID Layanan BLE Fast Pair / Quick Share.
+    public static let quickShareServiceUUID = "FE2C"
     public static let bleServiceUUIDStrings = [
         "FE2C",
         "FC12",
