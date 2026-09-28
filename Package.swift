@@ -71,7 +71,8 @@ let package = Package(
         .testTarget(
             name: "TossShareCoreTests",
             dependencies: [
-                "TossShareCore"
+                "TossShareCore",
+                "TossShareUI"
             ],
             path: "Tests/TossShareCoreTests",
             swiftSettings: [

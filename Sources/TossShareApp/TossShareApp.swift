@@ -12,8 +12,8 @@ import TossShareUI
 @main
 struct TossShareApp: App {
     var body: some Scene {
-        WindowGroup {
-            TossShareRadarPlaceholderView()
+        WindowGroup("TossShare") {
+            Phase1PreviewGallery()
         }
         .windowResizability(.contentSize)
 
