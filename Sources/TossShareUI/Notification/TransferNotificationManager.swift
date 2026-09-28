@@ -43,11 +43,17 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
     private var completedFiles: [UUID: [URL]] = [:]
     private var pendingContinuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
+    public var isBundleEnvironment: Bool {
+        Bundle.main.bundleIdentifier != nil
+    }
+
     public override init() {
         super.init()
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        setupCategories()
+        if isBundleEnvironment {
+            let center = UNUserNotificationCenter.current()
+            center.delegate = self
+            setupCategories()
+        }
     }
 
     /// Meminta persetujuan pengguna untuk transfer masuk secara asynchronous (via notifikasi atau in-app fallback).
@@ -84,6 +90,8 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
     /// Konfigurasi kategori dan aksi interaktif pada notifikasi sistem macOS.
     public func setupCategories() {
+        guard isBundleEnvironment else { return }
+
         let acceptAction = UNNotificationAction(
             identifier: TossShareNotificationAction.accept,
             title: "Terima",
@@ -122,6 +130,11 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
     /// Meminta izin notifikasi ke sistem macOS.
     public func requestAuthorization() async -> Bool {
+        guard isBundleEnvironment else {
+            self.isAuthorized = false
+            return false
+        }
+
         let center = UNUserNotificationCenter.current()
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
@@ -135,6 +148,11 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
     /// Memeriksa status izin terkini.
     public func checkAuthorizationStatus() async -> Bool {
+        guard isBundleEnvironment else {
+            self.isAuthorized = false
+            return false
+        }
+
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         let granted = settings.authorizationStatus == .authorized
@@ -146,8 +164,8 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
     public func postIncomingTransfer(session: TransferSession, from device: PeerDevice) {
         activeSessions[session.sessionId] = (session, device)
 
-        // Jika notifikasi tidak diizinkan atau app di foreground, kita siapkan fallback in-app
-        if !isAuthorized {
+        // Jika notifikasi tidak diizinkan atau running bare binary tanpa .app bundle, gunakan fallback in-app modal
+        if !isBundleEnvironment || !isAuthorized {
             self.fallbackIncomingSession = session
             self.fallbackSenderDevice = device
             return
@@ -184,8 +202,8 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
     public func postTransferSuccess(session: TransferSession, from device: PeerDevice, savedURLs: [URL]) {
         completedFiles[session.sessionId] = savedURLs
 
-        guard isAuthorized else {
-            // Jika notifikasi dimatikan, buka Finder langsung bila ada file
+        guard isBundleEnvironment && isAuthorized else {
+            // Jika notifikasi dimatikan atau running bare CLI binary, buka Finder langsung bila ada file
             if let first = savedURLs.first {
                 NSWorkspace.shared.activateFileViewerSelecting([first])
             }
@@ -213,7 +231,7 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
     /// Menampilkan notifikasi kegagalan transfer.
     public func postTransferFailed(session: TransferSession, reason: String) {
-        guard isAuthorized else { return }
+        guard isBundleEnvironment && isAuthorized else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "TossShare - Transfer Gagal"
