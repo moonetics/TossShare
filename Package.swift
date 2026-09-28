@@ -64,6 +64,9 @@ let package = Package(
                 "TossShareCore"
             ],
             path: "Sources/TossShareExtension",
+            exclude: [
+                "Info.plist"
+            ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]

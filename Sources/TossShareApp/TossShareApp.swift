@@ -18,6 +18,7 @@ struct TossShareApp: App {
     private let healthMonitor: NetworkHealthMonitor
     private let mdnsService: MDNSDiscoveryService
     private let bleMonitor: BLEProximityMonitor
+    private let receiverServer: NearbyReceiverServer
 
     init() {
         let newRegistry = DeviceRegistry()
@@ -33,15 +34,54 @@ struct TossShareApp: App {
         let ble = BLEProximityMonitor(registry: newRegistry)
         self.bleMonitor = ble
 
-        // Mulai scanning penemuan di background
+        let server = NearbyReceiverServer()
+        self.receiverServer = server
+
+        server.onRequestAcceptance = { session in
+            let dummySender = PeerDevice(
+                endpointId: session.peerEndpointId,
+                friendlyName: "Samsung Device",
+                deviceType: .phone,
+                ipAddress: "127.0.0.1",
+                port: 44445
+            )
+            return await TransferNotificationManager.shared.requestAcceptance(
+                session: session,
+                from: dummySender
+            )
+        }
+
+        server.onTransferCompleted = { session in
+            let dummySender = PeerDevice(
+                endpointId: session.peerEndpointId,
+                friendlyName: "Samsung Device",
+                deviceType: .phone,
+                ipAddress: "127.0.0.1",
+                port: 44445
+            )
+            Task { @MainActor in
+                let urls = session.items.compactMap { $0.localURL }
+                TransferNotificationManager.shared.postTransferSuccess(
+                    session: session,
+                    from: dummySender,
+                    savedURLs: urls
+                )
+            }
+        }
+
+        // Mulai scanning penemuan dan server penerima di background
         mdns.startDiscovery()
         ble.startMonitoring()
+        try? server.start()
     }
 
     var body: some Scene {
         // Jendela Radar Utama (AirDrop-like Native Window)
         WindowGroup("TossShare") {
             RadarMainView(registry: registry, advisor: advisor)
+                .task {
+                    _ = await TransferNotificationManager.shared.requestAuthorization()
+                }
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)

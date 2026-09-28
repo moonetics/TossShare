@@ -405,11 +405,11 @@ TossShare/
 ## 🎯 Definition of Done (DoD) Checklist Global
 
 Sebelum proyek **TossShare for macOS** dinyatakan rampung secara keseluruhan, pastikan seluruh kriteria berikut terpenuhi:
-- [ ] **Phase 0 Terpenuhi**: Proyek terkonfigurasi dengan Swift 6 Strict Concurrency, arsitektur modular bersih, dan tanpa boilerplate.
-- [ ] **Phase 1 Terpenuhi**: Design Tokens (warna Dark/Light mode, font San Francisco, animasi radar) dan komponen primitif SwiftUI terstandarisasi.
-- [ ] **Phase 2 Terpenuhi**: Model entitas `PeerDevice`, `TransferSession`, `TransferItem` mematuhi `Sendable` dan state machine teruji.
-- [ ] **Phase 3 Terpenuhi**: Handshake kriptografi UKEY2 (`CryptoKit`), framing biner, dan scanner mDNS `_FC9F5ED42C8A._tcp.` lulus unit test 100%.
-- [ ] **Phase 4 Terpenuhi**: Pengiriman file chunked 512KB dan penerimaan file NearDrop server berjalan dengan aman (RAM < 60 MB, auto-rename file duplikat aktif).
-- [ ] **Phase 5 Terpenuhi**: Jendela Radar animasi konsentris SwiftUI, Menu Bar Drop Zone, dan detektor AP Isolation berfungsi intuitif.
-- [ ] **Phase 6 Terpenuhi**: Finder Share Extension aktif, notifikasi sistem native terhubung, dan seluruh skenario Acceptance Criteria berstatus PASS.
-- [ ] **Integritas macOS**: Aplikasi berjalan tanpa hak akses `root`, tanpa kext, mematuhi SIP, dan berhasil di-build sebagai Universal Binary (Apple Silicon & Intel).
+- [x] **Phase 0 Terpenuhi**: Proyek terkonfigurasi dengan Swift 6 Strict Concurrency, arsitektur modular bersih, dan tanpa boilerplate.
+- [x] **Phase 1 Terpenuhi**: Design Tokens (warna Dark/Light mode, font San Francisco, animasi radar) dan komponen primitif SwiftUI terstandarisasi.
+- [x] **Phase 2 Terpenuhi**: Model entitas `PeerDevice`, `TransferSession`, `TransferItem` mematuhi `Sendable` dan state machine teruji.
+- [x] **Phase 3 Terpenuhi**: Handshake kriptografi UKEY2 (`CryptoKit`), framing biner, dan scanner mDNS `_FC9F5ED42C8A._tcp.` lulus unit test 100%.
+- [x] **Phase 4 Terpenuhi**: Pengiriman file chunked 512KB dan penerimaan file NearDrop server berjalan dengan aman (RAM < 60 MB, auto-rename file duplikat aktif).
+- [x] **Phase 5 Terpenuhi**: Jendela Radar animasi konsentris SwiftUI, Menu Bar Drop Zone, dan detektor AP Isolation berfungsi intuitif.
+- [x] **Phase 6 Terpenuhi**: Finder Share Extension aktif, notifikasi sistem native terhubung, dan seluruh skenario Acceptance Criteria berstatus PASS.
+- [x] **Integritas macOS**: Aplikasi berjalan tanpa hak akses `root`, tanpa kext, mematuhi SIP, dan berhasil di-build sebagai Universal Binary (Apple Silicon & Intel).

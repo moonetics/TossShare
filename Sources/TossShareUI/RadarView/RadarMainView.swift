@@ -14,6 +14,7 @@ public struct RadarMainView: View {
 
     @ObservedObject public var registry: DeviceRegistry
     @ObservedObject public var advisor: ConnectivityAdvisor
+    @ObservedObject private var notificationManager = TransferNotificationManager.shared
 
     @State private var activeSession: TransferSession?
     @State private var targetDeviceName: String = ""
@@ -77,6 +78,14 @@ public struct RadarMainView: View {
                     transferModalOverlay(session: session)
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                         .zIndex(30)
+                }
+
+                // 9. In-App Fallback Modal Permintaan Transfer Masuk
+                if let incoming = notificationManager.fallbackIncomingSession,
+                   let sender = notificationManager.fallbackSenderDevice {
+                    incomingTransferModalOverlay(session: incoming, sender: sender)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        .zIndex(35)
                 }
             }
             .frame(minWidth: 640, minHeight: 520)
@@ -394,4 +403,77 @@ public struct RadarMainView: View {
     private func toggleAPIsolationSimulation() {
         advisor.simulateAPIsolation(enabled: !advisor.shouldShowFallbackCard)
     }
+
+    private func incomingTransferModalOverlay(session: TransferSession, sender: PeerDevice) -> some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+
+            VStack(spacing: Theme.Spacing.md) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(Theme.Colors.accentAirDrop.opacity(0.15))
+                            .frame(width: 48, height: 48)
+
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(Theme.Colors.accentAirDrop)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Permintaan Transfer Masuk")
+                            .font(Theme.Typography.headline)
+                        Text("Dari: \(sender.friendlyName)")
+                            .font(Theme.Typography.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+                }
+
+                Divider()
+
+                VStack(spacing: 6) {
+                    let count = session.items.count
+                    let sizeStr = ByteCountFormatter.string(fromByteCount: session.totalBytes, countStyle: .file)
+                    Text("\(count) Berkas • \(sizeStr)")
+                        .font(Theme.Typography.deviceTitle)
+                        .fontWeight(.semibold)
+
+                    if !session.authPin.isEmpty {
+                        Text("PIN Verifikasi: \(session.authPin)")
+                            .font(Theme.Typography.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(Theme.Colors.accentSamsung)
+                    }
+                }
+                .padding(.vertical, 8)
+
+                HStack(spacing: 12) {
+                    Button("Tolak", role: .cancel) {
+                        notificationManager.resolveDecision(sessionId: session.sessionId, accepted: false)
+                        TossShareHaptics.performWarning()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+
+                    Button("Terima") {
+                        notificationManager.resolveDecision(sessionId: session.sessionId, accepted: true)
+                        TossShareHaptics.performSuccess()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                }
+            }
+            .padding(Theme.Spacing.lg)
+            .frame(width: 380)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Theme.Colors.surfaceCard)
+                    .shadow(color: Color.black.opacity(0.2), radius: 16, x: 0, y: 8)
+            )
+        }
+    }
 }
+

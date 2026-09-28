@@ -11,6 +11,7 @@ import Combine
 /// Central Registry reaktif untuk menyimpan dan mengelola daftar perangkat terdeteksi di jaringan lokal.
 @MainActor
 public final class DeviceRegistry: ObservableObject {
+    public static let shared = DeviceRegistry()
 
     @Published public private(set) var devices: [PeerDevice] = []
 
