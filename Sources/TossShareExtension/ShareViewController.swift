@@ -95,7 +95,7 @@ open class ShareViewController: NSViewController {
 
         Task {
             do {
-                try await sender.start(host: device.ipAddress, port: device.port)
+                try await sender.start(device: device)
             } catch {
                 await MainActor.run {
                     self.extensionContext?.cancelRequest(withError: error)

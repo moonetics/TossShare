@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import TossShareCore
+import AppKit
 
 /// Jendela antarmuka utama TossShare dengan animasi radar konsentris dan drop zone berkas.
 public struct RadarMainView: View {
@@ -22,6 +23,7 @@ public struct RadarMainView: View {
 
     @State private var isTargetedForDrop: Bool = false
     @State private var hoveredEndpointId: String?
+    @State private var isShowingQRPairing: Bool = false
 
     // Mock testing helper state
     @State private var isMockInjected: Bool = false
@@ -73,25 +75,26 @@ public struct RadarMainView: View {
                     footerStatusBar
                 }
 
-                // 8. Modal Overlay Sesi Transfer Aktif
-                if let session = activeSession {
-                    transferModalOverlay(session: session)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                        .zIndex(30)
-                }
-
-                // 9. In-App Fallback Modal Permintaan Transfer Masuk
+                // 8. In-App Fallback Modal Permintaan Transfer Masuk (Prioritas Tertinggi)
                 if let incoming = notificationManager.fallbackIncomingSession,
                    let sender = notificationManager.fallbackSenderDevice {
                     incomingTransferModalOverlay(session: incoming, sender: sender)
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                         .zIndex(35)
+                } else if let session = activeSession {
+                    // 9. Modal Overlay Sesi Transfer Keluar Aktif
+                    transferModalOverlay(session: session)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        .zIndex(30)
                 }
             }
             .frame(minWidth: 640, minHeight: 520)
             .animation(.spring(response: 0.45, dampingFraction: 0.8), value: registry.devices.count)
             .animation(.easeInOut(duration: 0.3), value: activeSession != nil)
             .animation(.easeInOut(duration: 0.3), value: advisor.shouldShowFallbackCard)
+            .sheet(isPresented: $isShowingQRPairing) {
+                QRPairingSheetView()
+            }
         }
     }
 
@@ -161,12 +164,36 @@ public struct RadarMainView: View {
 
         return ForEach(registry.devices) { device in
             let pos = nodePositions.first(where: { $0.endpointId == device.endpointId })?.point ?? center
+            let displayName = registry.displayName(for: device)
+            let isPrivacy = device.isPrivacyMode
+            let subtitle = isPrivacy ? "Mode Privasi" : (device.ipAddress.isEmpty || device.ipAddress == "mDNS" ? "Siap Menerima" : device.ipAddress)
 
             DeviceAvatarNode(
-                name: device.friendlyName,
+                name: displayName,
                 type: nodeType(for: device.deviceType),
+                statusSubtitle: subtitle,
                 isHighlighted: hoveredEndpointId == device.endpointId
             )
+            .contextMenu {
+                Button {
+                    sendClipboardText(to: device)
+                } label: {
+                    let clip = NSPasteboard.general.string(forType: .string) ?? ""
+                    let preview = clip.count > 25 ? String(clip.prefix(25)) + "..." : clip
+                    if !preview.isEmpty {
+                        Label("Kirim Teks: \"\(preview)\"", systemImage: "doc.on.clipboard")
+                    } else {
+                        Label("Kirim Teks Clipboard", systemImage: "doc.on.clipboard")
+                    }
+                }
+
+                Button {
+                    selectAndSendFiles(to: device)
+                } label: {
+                    Label("Kirim Berkas...", systemImage: "folder")
+                }
+            }
+            .help(device.isPrivacyMode ? "Atur Quick Share ke 'Siapa saja' di HP agar nama lengkap muncul" : "")
             .position(pos)
             .onDrop(of: [UTType.fileURL.identifier], isTargeted: Binding(
                 get: { hoveredEndpointId == device.endpointId },
@@ -211,8 +238,15 @@ public struct RadarMainView: View {
 
                 Spacer()
 
-                // Tombol Mock Helper untuk Simulasi dan Diagnostik
                 HStack(spacing: 8) {
+                    // Tombol Fallback QR Pairing
+                    Button(action: { isShowingQRPairing = true }) {
+                        Label("QR Pairing", systemImage: "qrcode")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+
+                    // Tombol Mock Helper untuk Simulasi dan Diagnostik
                     Button(action: toggleMockDevices) {
                         Label(
                             isMockInjected ? "Hapus Mock" : "Tambah Mock",
@@ -264,87 +298,218 @@ public struct RadarMainView: View {
 
     private func transferModalOverlay(session: TransferSession) -> some View {
         ZStack {
-            Color.black.opacity(0.35)
+            Color.black.opacity(0.4)
                 .ignoresSafeArea()
                 .onTapGesture { /* Prevent click through */ }
 
-            VStack(spacing: Theme.Spacing.md) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Mengirim ke \(targetDeviceName)")
-                            .font(Theme.Typography.headline)
-                            .foregroundColor(.primary)
+            if session.state == .waitingAcceptance {
+                waitingAcceptanceInteractiveCard(session: session)
+            } else {
+                standardTransferCard(session: session)
+            }
+        }
+    }
 
-                        if !session.authPin.isEmpty {
-                            Text("Kode PIN Verifikasi: \(session.authPin)")
-                                .font(Theme.Typography.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(Theme.Colors.accentSamsung)
-                        }
-                    }
+    private func waitingAcceptanceInteractiveCard(session: TransferSession) -> some View {
+        VStack(spacing: Theme.Spacing.md) {
+            // Ikon Smartphone Animasi dengan Halo Bercahaya
+            ZStack {
+                Circle()
+                    .fill(Theme.Colors.accentSamsung.opacity(0.15))
+                    .frame(width: 80, height: 80)
 
-                    Spacer()
+                Circle()
+                    .fill(Theme.Colors.surfaceCard)
+                    .frame(width: 64, height: 64)
+                    .overlay(Circle().stroke(Theme.Colors.accentSamsung, lineWidth: 2))
 
-                    Button(action: cancelActiveTransfer) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.system(size: 28))
+                    .foregroundColor(Theme.Colors.accentSamsung)
+            }
+            .padding(.top, Theme.Spacing.sm)
+
+            VStack(spacing: 6) {
+                Text("Menunggu Persetujuan...")
+                    .font(Theme.Typography.headline)
+                    .fontWeight(.bold)
+
+                Text("Buka kunci layar **\(targetDeviceName)**, lalu ketuk **'Terima'** pada dialog Quick Share ponsel.")
+                    .font(Theme.Typography.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Theme.Spacing.md)
+            }
+
+            if !session.authPin.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundColor(Theme.Colors.accentSamsung)
+                    Text("Kode PIN Verifikasi: \(session.authPin)")
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
                 }
-
-                Divider()
-
-                TransferProgressBar(
-                    fileName: session.items.first?.fileName ?? "Berkas",
-                    progress: session.progress,
-                    transferredBytes: session.transferredBytes,
-                    totalBytes: max(1, session.totalBytes),
-                    speedBytesPerSecond: session.speedBytesPerSecond,
-                    onCancel: cancelActiveTransfer
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Theme.Colors.accentSamsung.opacity(0.12))
+                        .overlay(Capsule().stroke(Theme.Colors.accentSamsung.opacity(0.35), lineWidth: 1))
                 )
             }
-            .padding(Theme.Spacing.lg)
-            .frame(width: 440)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radii.sheet)
-                    .fill(.ultraThinMaterial)
-                    .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Radii.sheet)
-                            .stroke(Theme.Colors.borderSubtle, lineWidth: 1)
-                    )
+
+            HStack(spacing: 8) {
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text("Menunggu respons dari ponsel Samsung...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 2)
+
+            Divider()
+
+            Button(role: .cancel, action: cancelActiveTransfer) {
+                Text("Batalkan Transfer")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+        }
+        .padding(Theme.Spacing.lg)
+        .frame(width: 420)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radii.sheet)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radii.sheet)
+                        .stroke(Theme.Colors.borderSubtle, lineWidth: 1)
+                )
+        )
+    }
+
+    private func standardTransferCard(session: TransferSession) -> some View {
+        VStack(spacing: Theme.Spacing.md) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mengirim ke \(targetDeviceName)")
+                        .font(Theme.Typography.headline)
+                        .foregroundColor(.primary)
+
+                    Text(transferStatusText(for: session))
+                        .font(Theme.Typography.caption)
+                        .foregroundColor(.secondary)
+
+                    if !session.authPin.isEmpty {
+                        Text("Kode PIN Verifikasi: \(session.authPin)")
+                            .font(Theme.Typography.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(Theme.Colors.accentSamsung)
+                    }
+                }
+
+                Spacer()
+
+                Button(action: cancelActiveTransfer) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            TransferProgressBar(
+                fileName: session.items.first?.fileName ?? "Berkas",
+                progress: session.progress,
+                transferredBytes: session.transferredBytes,
+                totalBytes: max(1, session.totalBytes),
+                speedBytesPerSecond: session.speedBytesPerSecond,
+                onCancel: cancelActiveTransfer
             )
+        }
+        .padding(Theme.Spacing.lg)
+        .frame(width: 440)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radii.sheet)
+                .fill(.ultraThinMaterial)
+                .shadow(color: Color.black.opacity(0.25), radius: 24, x: 0, y: 12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radii.sheet)
+                        .stroke(Theme.Colors.borderSubtle, lineWidth: 1)
+                )
+        )
+    }
+
+    private func transferStatusText(for session: TransferSession) -> String {
+        switch session.state {
+        case .connecting:
+            return "Menghubungkan ke \(targetDeviceName)..."
+        case .authenticating:
+            return "Menjabat tangan enkripsi UKEY2..."
+        case .waitingAcceptance:
+            return "Menunggu Anda menekan 'Terima' di layar \(targetDeviceName)..."
+        case .transferring:
+            return "Mengalirkan berkas ke \(targetDeviceName)..."
+        case .completed:
+            return "Pengiriman Berhasil!"
+        case .failed:
+            return session.errorMessage ?? "Pengiriman Gagal"
+        case .cancelled:
+            return "Dibatalkan"
+        case .idle:
+            return "Menyiapkan berkas..."
         }
     }
 
     // MARK: - Actions
 
     private func handleDroppedFiles(providers: [NSItemProvider], targetDevice: PeerDevice) -> Bool {
-        guard let provider = providers.first else { return false }
+        guard !providers.isEmpty else { return false }
 
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            guard let fileURL = url else { return }
-            Task { @MainActor in
-                self.startTransfer(fileURL: fileURL, to: targetDevice)
+        let group = DispatchGroup()
+        let collector = URLCollector()
+
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                defer { group.leave() }
+                if let fileURL = url {
+                    collector.append(fileURL)
+                }
             }
+        }
+
+        group.notify(queue: .main) {
+            let flattened = FileItemCollector.flattenURLs(collector.getAll())
+            guard !flattened.isEmpty else { return }
+            self.startTransfer(fileURLs: flattened, to: targetDevice)
         }
         return true
     }
 
-    private func startTransfer(fileURL: URL, to device: PeerDevice) {
-        let fileName = fileURL.lastPathComponent
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.int64Value ?? 1024
+    private func startTransfer(fileURLs: [URL], to device: PeerDevice) {
+        // Cari entitas perangkat teranyar di registry untuk menghindari ID mDNS kadaluwarsa
+        let activeDevice = registry.devices.first(where: {
+            $0.endpointId == device.endpointId ||
+            (!device.ipAddress.isEmpty && device.ipAddress != "mDNS" && $0.ipAddress == device.ipAddress)
+        }) ?? device
 
-        let item = TransferItem(
-            fileName: fileName,
-            mimeType: "application/octet-stream",
-            fileSize: fileSize,
-            localURL: fileURL
-        )
+        let items = fileURLs.compactMap { url -> TransferItem? in
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 1024
+            return TransferItem(
+                fileName: url.lastPathComponent,
+                mimeType: "application/octet-stream",
+                fileSize: size,
+                localURL: url
+            )
+        }
 
-        self.targetDeviceName = device.friendlyName
-        let sender = NearbySenderSession(peerEndpointId: device.endpointId, items: [item])
+        guard !items.isEmpty else { return }
+
+        self.targetDeviceName = registry.displayName(for: activeDevice)
+        let sender = NearbySenderSession(peerEndpointId: activeDevice.endpointId, items: items)
         self.activeSender = sender
         self.activeSession = sender.session
 
@@ -370,14 +535,92 @@ public struct RadarMainView: View {
             }
 
             do {
-                try await sender.start(host: device.ipAddress, port: device.port)
+                try await sender.start(device: activeDevice)
             } catch {
                 Task { @MainActor in
                     TossShareHaptics.performWarning()
-                    self.activeSession = nil
-                    self.activeSender = nil
+                    self.activeSession = sender.session
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    if self.activeSession?.state == .failed {
+                        self.activeSession = nil
+                        self.activeSender = nil
+                    }
                 }
             }
+        }
+    }
+
+    private func sendClipboardText(to device: PeerDevice) {
+        let activeDevice = registry.devices.first(where: {
+            $0.endpointId == device.endpointId ||
+            (!device.ipAddress.isEmpty && device.ipAddress != "mDNS" && $0.ipAddress == device.ipAddress)
+        }) ?? device
+
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            return
+        }
+
+        let item = TransferItem(
+            fileName: text,
+            mimeType: "text/plain",
+            fileSize: Int64(text.utf8.count),
+            localURL: nil
+        )
+
+        self.targetDeviceName = registry.displayName(for: activeDevice)
+        let sender = NearbySenderSession(peerEndpointId: activeDevice.endpointId, items: [item])
+        self.activeSender = sender
+        self.activeSession = sender.session
+
+        TossShareHaptics.performDropSnapped()
+
+        Task {
+            sender.onProgressUpdate = { updatedSession in
+                Task { @MainActor in
+                    self.activeSession = updatedSession
+                }
+            }
+
+            sender.onStateChange = { updatedSession in
+                Task { @MainActor in
+                    self.activeSession = updatedSession
+                    if updatedSession.state == .completed {
+                        TossShareHaptics.performSuccess()
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        self.activeSession = nil
+                        self.activeSender = nil
+                    }
+                }
+            }
+
+            do {
+                try await sender.start(device: activeDevice)
+            } catch {
+                Task { @MainActor in
+                    TossShareHaptics.performWarning()
+                    self.activeSession = sender.session
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    if self.activeSession?.state == .failed {
+                        self.activeSession = nil
+                        self.activeSender = nil
+                    }
+                }
+            }
+        }
+    }
+
+    private func selectAndSendFiles(to device: PeerDevice) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        let displayName = registry.displayName(for: device)
+        panel.prompt = "Kirim ke \(displayName)"
+
+        if panel.runModal() == .OK {
+            let flattened = FileItemCollector.flattenURLs(panel.urls)
+            guard !flattened.isEmpty else { return }
+            self.startTransfer(fileURLs: flattened, to: device)
         }
     }
 

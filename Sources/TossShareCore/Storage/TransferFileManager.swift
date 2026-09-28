@@ -57,6 +57,38 @@ public struct TransferFileManager: Sendable {
         }
     }
 
+    // MARK: - Multi-File Batch Subfolder
+
+    /// Menentukan URL subfolder tujuan saat menerima banyak berkas (> 1 berkas).
+    /// Format nama folder: `TossShare - <Nama Pengirim> (<Tanggal Jam>)`, contoh: `TossShare - Samsung A54 (2026-09-28 20.15)`.
+    /// Otomatis menambahkan suffix nomor jika folder sudah ada.
+    public func resolveBatchDestinationDirectory(peerName: String, date: Date = Date()) -> URL {
+        let fileManager = FileManager.default
+        let rawPeer = peerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitizedPeer = rawPeer.isEmpty ? "Samsung" : rawPeer.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm"
+        let dateString = formatter.string(from: date)
+
+        let baseFolderName = "TossShare - \(sanitizedPeer) (\(dateString))"
+        var targetURL = destinationDirectory.appendingPathComponent(baseFolderName)
+
+        guard fileManager.fileExists(atPath: targetURL.path) else {
+            return targetURL
+        }
+
+        var counter = 1
+        while true {
+            let newFolderName = "\(baseFolderName) (\(counter))"
+            targetURL = destinationDirectory.appendingPathComponent(newFolderName)
+            if !fileManager.fileExists(atPath: targetURL.path) {
+                return targetURL
+            }
+            counter += 1
+        }
+    }
+
     // MARK: - Business Rule BR-002: Staging & Pembersihan File Batal
 
     /// Menghasilkan URL berkas tersembunyi temporer (.filename.part) untuk proses penulisan sementara.

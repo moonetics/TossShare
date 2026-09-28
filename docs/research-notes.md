@@ -1,74 +1,96 @@
-# Research Notes: Reverse Engineering & Technical Benchmarks
+# Research Notes: Deep Dive 5 Repositori Quick Share
 
-Dokumen ini memuat temuan riset teknis, analisis protokol, perbandingan arsitektur nirkabel Apple vs Samsung, serta tolok ukur kompetitor untuk proyek **TossShare for macOS**.
-
----
-
-## 1. Kategorisasi Temuan Riset
-
-### A. Bukti Terverifikasi (Verified Evidence)
-1. **Batasan Core Bluetooth macOS (`CBPeripheralManager`)**:
-   - Berdasarkan inspeksi langsung header SDK Xcode (`/System/Library/Frameworks/CoreBluetooth.framework/Headers/CBPeripheralManager.h`), Apple secara eksplisit mendokumentasikan:
-     > *"Supported advertising data types are `CBAdvertisementDataLocalNameKey` and `CBAdvertisementDataServiceUUIDsKey`."*
-   - Memasukkan kunci `CBAdvertisementDataServiceDataKey` atau `CBAdvertisementDataManufacturerDataKey` pada `startAdvertising:` memicu pesan error `API MISUSE` di konsol sistem dan paket data tersebut secara otomatis di-drop oleh daemon `bluetoothd`.
-2. **Kemampuan Scanning Core Bluetooth (`CBCentralManager`)**:
-   - Berbeda dengan advertising, sisi scanning (`CBCentralManager`) pada macOS dapat membaca isi `CBAdvertisementDataServiceDataKey` dan `CBAdvertisementDataManufacturerDataKey` tanpa pembatasan. Hal ini memungkinkan Mac mendeteksi beacon kedekatan (proximity) yang dipancarkan oleh Samsung Galaxy.
-3. **Penyatuan Protokol Nearby Share & Quick Share (2024)**:
-   - Mulai awal tahun 2024 (bersamaan dengan peluncuran Samsung Galaxy S24 dan update Google Play Services), Google Nearby Share dan Samsung Quick Share resmi dilebur menjadi satu protokol terpadu dengan tetap mempertahankan pengenal mDNS `_FC9F5ED42C8A._tcp.`.
-
-### B. Riset Sekunder & Reverse Engineering (Secondary Research)
-1. **Analisis Protokol NearDrop (@grishka)**:
-   - Menggunakan mDNS service type `_FC9F5ED42C8A._tcp.` (berasal dari `SHA256("NearbySharing")[0..6]`).
-   - Format TXT Record `n`: String terenkripsi base64 URL-safe yang memuat:
-     - Byte 0: Bitfield (visibilitas, tipe perangkat: `0x01` Phone, `0x02` Tablet, `0x03` Laptop).
-     - Byte 1..16: Salt & metadata key (16 byte).
-     - Byte 17: Panjang nama perangkat (UTF-8 length).
-     - Byte 18+: Nama perangkat ramah pengguna (*friendly name*).
-   - Jabat Tangan Kriptografi UKEY2:
-     - Menggunakan kurva eliptik P-256 (NIST P-256 / secp256r1).
-     - Pertukaran frame: `ClientInit` -> `ServerInit` -> `ClientFinish`.
-     - Derivasi kunci otentikasi bersama via HKDF-SHA256 untuk memverifikasi 4-digit PIN.
-     - Enkripsi muatan menggunakan AES-CBC atau AES-GCM.
-2. **Implementasi Linux (RQuickShare & QNearbyShare)**:
-   - Pada platform Linux, pengembang dapat menyiarkan paket BLE kustom secara bebas berkat stack `BlueZ` (`org.bluez.LEAdvertisement1`). Namun di macOS, stack Bluetooth dikelola secara ketat oleh Apple (`bluetoothd`), sehingga pendekatan Linux tidak dapat di-porting ke macOS tanpa driver kernel kustom.
+Dokumen ini mendokumentasikan hasil audit teknis, analisis kode sumber (*source code review*), dan perbandingan arsitektural dari 5 repositori reverse-engineering Quick Share / Nearby Share terbuka.
 
 ---
 
-## 2. Perbandingan Arsitektur Ekosistem: Apple AirDrop vs Samsung Quick Share
+## 1. Referensi Utama: leonboe1/QuickDrop
+- **URL**: [https://github.com/leonboe1/QuickDrop](https://github.com/leonboe1/QuickDrop)
+- **Bahasa & Platform**: Swift (macOS & iOS)
+- **Status**: Fork yang disempurnakan dari NearDrop dengan kapabilitas pengiriman aktif (*Outbound Transfer*).
 
-| Komponen | Apple AirDrop (Mac & iPhone) | Samsung Quick Share Native | Solusi TossShare for macOS |
-| :--- | :--- | :--- | :--- |
-| **Lapisan Penemuan (Discovery)** | BLE Beacon (Apple `0x004C`) | BLE Beacon Fast Pair (`0xFE2C`) & mDNS | mDNS `_FC9F5ED42C8A._tcp.` + BLE Scan |
-| **Jalur Data Nirkabel (Data Link)** | **AWDL** (Apple Wireless Direct Link P2P) | **Wi-Fi Direct** (Wi-Fi Alliance P2P) | **Wi-Fi LAN Bersama** + Fallback Hotspot/USB-C |
-| **Ketergantungan Router** | ❌ Tidak butuh router sama sekali | ❌ Tidak butuh router sama sekali | 🟢 Menggunakan router (atau Hotspot HP sebagai router mini) |
-| **Otentikasi Identitas** | Sertifikat Apple ID (Mutual TLS) | Google Account / UKEY2 PIN | Jabat Tangan Kriptografi UKEY2 |
-| **Kecepatan Maksimal** | 40 – 90 MB/detik | 50 – 110 MB/detik | 30 – 80 MB/s (Wi-Fi) / 300–800 MB/s (USB-C) |
+### Temuan Arsitektural Kunci:
+1. **Publikasi mDNS dengan `NetService`**:
+   - QuickDrop tidak mengandalkan `NWListener.service`. QuickDrop membuat instans `NetService(domain: "", type: "_FC9F5ED42C8A._tcp.", name: name, port: port)` secara eksplisit.
+   - Nama instans mDNS adalah 10-byte Base64 URL-safe:
+     ```swift
+     let nameBytes: [UInt8] = [
+         0x23, // PCP
+         endpointID[0], endpointID[1], endpointID[2], endpointID[3],
+         0xFC, 0x9F, 0x5E, // Hash service ID
+         0, 0
+     ]
+     let name = Data(nameBytes).urlSafeBase64EncodedString()
+     ```
+   - Atribut TXT record diset menggunakan dictionary `[txtKeyEndpointInfo: deviceInfo.serialize().urlSafeBase64EncodedString().data(using: .utf8)!]` via `NetService.data(fromTXTRecord:)`.
+2. **Resolusi Endpoint Target (`NearbyBonjourServiceResolver.swift`)**:
+   - Menggunakan delegate `NetServiceDelegate` (`netServiceDidResolveAddress`) untuk mengekstrak alamat `sockaddr_in` (IPv4) dan port tujuan.
+   - Mendukung penanganan antarmuka IPv6 link-local bila diperlukan.
+3. **Resolusi Nama Asli (`NearbyDeviceNameResolver.swift`)**:
+   - Jika metadata mDNS kosong (karena mode privasi Android), QuickDrop menjalankan reverse lookup `getnameinfo(..., NI_NUMERICHOST)` untuk mendapatkan hostname perangkat dari router.
+4. **Mesin Pengirim (`OutboundNearbyConnection.swift`)**:
+   - Mengimplementasikan state machine pengirim:
+     `initial` $\rightarrow$ `sentUkeyClientInit` $\rightarrow$ `sentUkeyClientFinish` $\rightarrow$ `sentPairedKeyEncryption` $\rightarrow$ `sentPairedKeyResult` $\rightarrow$ `sentIntroduction` $\rightarrow$ `sendingFiles`.
+   - Streaming berkas dengan potongan buffer 512 KB (`FileHandle.read(upToCount: 512 * 1024)`).
+   - Pengiriman frame EOF dengan `flags = 1` setelah offset mencapai ukuran penuh.
 
 ---
 
-## 3. Matriks Tolok Ukur Kompetitor (Competitor Benchmarking)
+## 2. ignotusbucius/open-quickshare
+- **URL**: [https://github.com/ignotusbucius/open-quickshare](https://github.com/ignotusbucius/open-quickshare)
+- **Bahasa & Platform**: Rust / C (Linux)
+- **Status**: Implementasi Quick Share paling lengkap di ekosistem Linux (Bluetooth LE + Wi-Fi LAN + Wi-Fi Direct).
 
-| Parameter | NearDrop (Resmi) | LocalSend | TossShare for macOS (Rancangan Kita) |
-| :--- | :---: | :---: | :---: |
-| **Arah Transfer** | 1 Arah (Hanya Terima di Mac) | 2 Arah (Kirim & Terima) | **2 Arah (Kirim & Terima)** |
-| **Aplikasi Tambahan di Samsung** | ❌ Tidak Butuh (Quick Share) | ⚠️ **Wajib Install APK LocalSend** | **❌ Tidak Butuh (Quick Share bawaan)** |
-| **Metode Penemuan Mac -> Samsung** | Wajib Pindai QR Code | mDNS kustom LocalSend | **Otomatis Tanpa QR Code** |
-| **Integrasi Finder macOS** | Share Sheet (Kirim via QR) | Drag & Drop di App Window | **Jendela Radar + Menu Bar + Share Sheet** |
-| **Ketahanan AP Isolation** | Gagal total | Gagal total | **Deteksi Cerdas + Fallback Hotspot/Kabel** |
-| **Kompatibilitas Mac** | Apple Silicon & Intel | Apple Silicon & Intel | **Apple Silicon & Intel (Universal Binary)** |
+### Temuan Arsitektural Kunci:
+1. **Hierarki Transport Multi-Tier**:
+   - Tingkat 1 (Penemuan Awal): BLE Advertising & Scanning.
+   - Tingkat 2 (High-Speed Transfer): Upgrade otomatis ke Wi-Fi LAN jika berada pada SSID yang sama.
+   - Tingkat 3 (Offline / No Router): Host Wi-Fi Direct hotspot di salah satu perangkat.
+2. **Transisi Saluran Tanpa Kehilangan Data (*Lossless Mid-Transfer Channel Swap*)**:
+   - Pengurasan socket lama (*drain*) menggunakan frame kendali `LAST_WRITE` dan `SAFE_TO_CLOSE` sebelum berpindah ke soket baru.
+   - Penundaan disinkronisasi sebelum penutupan koneksi (`asyncAfter: 0.5s`) agar frame EOF diproses tuntas oleh pihak penerima.
 
 ---
 
-## 4. Evaluasi Solusi Terhadap Batasan Perangkat Keras macOS
+## 3. Medformatik/CrossDrop
+- **URL**: [https://github.com/Medformatik/CrossDrop](https://github.com/Medformatik/CrossDrop)
+- **Bahasa & Platform**: Flutter / Dart & Swift (macOS, iOS, Linux)
+- **Status**: Implementasi portabel berbasis fondasi protokol NearDrop.
 
-```
-+-----------------------------------+-----------------------------------+
-|     Pendekatan Eksperimental      |        Pendekatan Terpilih        |
-|    (Bypass Kernel Bluetooth)      |     (Native mDNS + Wi-Fi LAN)     |
-+-----------------------------------+-----------------------------------+
-| ❌ Butuh disable SIP              | 🟢 SIP tetap aktif (Aman)         |
-| ❌ Tidak lolos notarization Apple | 🟢 Lolos Gatekeeper & Notarisasi  |
-| ❌ Berisiko panic di SoC M1-M4    | 🟢 100% stabil di semua chip Mac  |
-| ❌ Rentan rusak tiap update OS    | 🟢 Menggunakan API publik stabil  |
-+-----------------------------------+-----------------------------------+
-```
+### Temuan Arsitektural Kunci:
+1. **Fallback Pemindaian QR Code**:
+   - Mengatasi limitasi mode "Contacts Only" pada Quick Share dengan membangkitkan QR Code lokal yang membawa `EndpointInfo` dan token pairing privat, memungkinkan ponsel memindai layar Mac saat mDNS tidak ditemukan.
+2. **Transfer Teks & URL Fleksibel**:
+   - Menggunakan payload bertipe `TEXT` dan `URL` dengan dialog persetujuan terpisah di popover menu bar.
+
+---
+
+## 4. Martichou/rquickshare
+- **URL**: [https://github.com/Martichou/rquickshare](https://github.com/Martichou/rquickshare)
+- **Bahasa & Platform**: Rust (Linux & macOS)
+- **Status**: Implementasi performa tinggi untuk pengiriman dan penerimaan berkas over Wi-Fi LAN.
+
+### Temuan Arsitektural Kunci:
+1. **Heartbeat Keep-Alive Terjadwal**:
+   - Google Quick Share mengharuskan pengiriman `OfflineFrame(type: KEEP_ALIVE)` secara periodik (setiap 10 detik). Tanpa ini, socket TCP akan diputus sepihak oleh Android saat transfer berkas berukuran besar.
+2. **Toleransi Segmentasi TCP**:
+   - Pembacaan header 4-byte big-endian wajib mengantisipasi paket chunk TCP yang terfragmentasi.
+
+---
+
+## 5. grishka/NearDrop
+- **URL**: [https://github.com/grishka/NearDrop](https://github.com/grishka/NearDrop)
+- **Bahasa & Platform**: Swift (macOS)
+- **Status**: Pelopor implementasi reverse engineering Quick Share di macOS (dokumen acuan: `PROTOCOL.md`).
+
+### Temuan Arsitektural Kunci:
+1. **Kriptografi UKEY2**:
+   - Kurva eliptik P-256 (NIST P-256 / secp256r1).
+   - Derivasi kunci menggunakan HKDF-SHA256:
+     - Salt: `SHA256("D2D")` $\rightarrow$ D2D client/server keys.
+     - Salt: `SHA256("SecureMessage")` $\rightarrow$ Decrypt/Encrypt (`ENC:2`) dan HMAC (`SIG:1`).
+2. **Struktur Frame Wire Protobuf**:
+   - Header 4-byte panjang pesan Big-Endian.
+   - Pembungkus terluar: `SecureMessage` (AES-256-CBC + HMAC-SHA256).
+   - Isi terenkripsi: `DeviceToDeviceMessage` yang membawa serialized `OfflineFrame`.
+   - Payload data: `PayloadTransferFrame` bertipe `.file` atau `.bytes`.

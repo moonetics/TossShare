@@ -1,53 +1,51 @@
-# Product Requirements Document (PRD): TossShare for macOS
-## Aplikasi Transfer File Dua Arah Quick Share (Samsung & Android Compatible)
+# Product Requirements Document (PRD): TossShare v2.0
+## Arsitektur Transfer Dua Arah Native macOS Berbasis Standar QuickDrop
 
 ---
 
 ## 1. Ringkasan Eksekutif (Executive Summary)
-**TossShare** adalah aplikasi macOS native berbasis Swift murni yang menghadirkan pengalaman transfer file dua arah (Kirim & Terima) antara seluruh lini komputer Mac (Apple Silicon & Intel) dan perangkat Samsung Galaxy (serta ekosistem Android) menggunakan protokol **Quick Share** bawaan sistem operasi.
+**TossShare v2.0** adalah aplikasi macOS native murni (Swift) yang menghadirkan pengalaman transfer berkas dan data nirkabel dua arah (Kirim & Terima) antara seluruh lini komputer Mac (Apple Silicon & Intel) dan ekosistem Android/Samsung Galaxy menggunakan protokol **Quick Share / Google Nearby Connections**.
 
-Dibangun dengan merefaktor dan memperluas fondasi reverse-engineering dari [NearDrop](https://github.com/grishka/NearDrop) (yang sebelumnya hanya mendukung peran penerima *receive-only*), TossShare menghadirkan:
-1. **Peran Pengirim (Sender Engine)** dengan penemuan otomatis perangkat Samsung tanpa memerlukan QR Code.
-2. **Tanpa Aplikasi Tambahan di Samsung**: Pengguna Samsung cukup menggunakan fitur Quick Share bawaan One UI.
-3. **Strategi Jaringan Bertingkat & Tangguh**: Mendukung Wi-Fi LAN lokal biasa, fallback nirkabel via **Mobile Hotspot** saat terjadi AP Isolation / ketiadaan router, serta fallback fisik ultra-cepat via **kabel USB-C Tethering**.
-4. **Antarmuka AirDrop-Like**: Jendela Radar animasi konsentris SwiftUI, Menu Bar Drop Zone, dan integrasi Finder Share Extension (klik kanan > Share > TossShare).
-5. **Universal & Aman**: Berjalan di macOS 13.0 (Ventura) ke atas tanpa hak akses `root`, tanpa menonaktifkan System Integrity Protection (SIP), dan tanpa memodifikasi kernel Bluetooth.
+Dengan mengadopsi dan menyempurnakan arsitektur dari 5 repositori teruji—khususnya **[leonboe1/QuickDrop](https://github.com/leonboe1/QuickDrop)** sebagai referensi utama—TossShare menyelesaikan keterbatasan mendasar implementasi sebelumnya (seperti NearDrop yang hanya *receive-only* atau bug publikasi mDNS Network.framework). Aplikasi ini mengombinasikan keandalan *core networking* berbasis `NetService` dan `NearbyBonjourServiceResolver` dengan antarmuka modern Apple-grade (Radar Gelombang SwiftUI & Menu Bar Drop Zone).
 
 ---
 
 ## 2. Pernyataan Masalah (Problem Statement)
-Pengguna yang mengoperasikan ekosistem campuran—laptop macOS dan ponsel Samsung Galaxy—mengalami friksi produktivitas harian yang signifikan:
-- **Eksklusivitas AirDrop**: AirDrop hanya berfungsi antar perangkat Apple.
-- **Keterbatasan NearDrop**: Aplikasi komunitas NearDrop hanya mampu menerima file dari Android ke Mac, sedangkan pengiriman dari Mac ke Android mewajibkan pemindaian QR Code yang lambat dan canggung.
-- **Overhead Aplikasi Pihak Ketiga**: Solusi alternatif seperti LocalSend atau KDE Connect mengharuskan instalasi aplikasi di kedua perangkat, menghilangkan kepraktisan berbagi instan bawaan sistem operasi.
-- **Kendala Jaringan Lapangan**: Saat berada di luar ruangan tanpa router Wi-Fi atau di jaringan publik dengan *Client/AP Isolation* (hotel, kafe, kantor), transfer file nirkabel sering kali gagal tanpa kejelasan penyebab bagi pengguna.
+1. **Asimetri Transfer**: Pengguna Mac dan Android sering kali terpaksa mengunggah berkas ke cloud (Google Drive, Telegram, WhatsApp) hanya untuk memindahkan foto, video, atau dokumen antar perangkat yang bersebelahan.
+2. **Kerapuhan Iklan mDNS di macOS**: Penggunaan API `NWListener.service` pada macOS sering kali menyebabkan instance name atau TXT record (`n`) terpotong atau gagal terbaca oleh pemindai Android Quick Share.
+3. **Keterbatasan Mode Privasi**: Ketika Samsung Galaxy diatur ke "Contacts Only", mDNS menyembunyikan identitas perangkat, menyebabkan Mac menampilkan nama generik atau gagal memulai handshake jika tidak tersedia fallback QR Code.
+4. **Isolasi Jaringan (AP Isolation)**: Jaringan Wi-Fi publik (kafe, kantor, hotel) kerap memblokir komunikasi antar-klien, menyebabkan transfer gagal tanpa pesan kesalahan yang jelas.
 
 ---
 
 ## 3. Visi & Tujuan Produk (Product Vision & Goals)
-- **Visi**: Menghadirkan pengalaman transfer file nirkabel sekelas AirDrop bagi pengguna Mac dan Samsung tanpa friksi konfigurasi.
+- **Visi**: Menjadi standar emas berbagi berkas lintas ekosistem (Mac ⇄ Android) yang cepat, aman, dan tanpa friksi konfigurasi layaknya AirDrop native.
 - **Tujuan Utama**:
-  - **Zero-Config Discovery**: Mac dapat menemukan ponsel Samsung yang siap menerima secara instan dalam < 2 detik.
-  - **Full High-Speed Wi-Fi**: Memaksimalkan throughput jaringan lokal dengan enkripsi end-to-end berstandar industri (UKEY2).
-  - **100% Native & Kompatibel**: Memastikan aplikasi dapat berjalan mulus di semua Mac (M1/M2/M3/M4 dan Intel) tanpa melanggar batasan keamanan macOS.
+  - **Zero-Install pada Samsung**: Bekerja langsung dengan fitur Quick Share bawaan Samsung One UI / Android tanpa menginstal aplikasi apa pun di ponsel.
+  - **Latency Penemuan Rendah**: Menemukan perangkat tujuan di sekitar dalam $< 1.5$ detik.
+  - **Throughput Maksimal**: Mengalirkan data via Wi-Fi LAN lokal dengan kecepatan penuh perangkat ($> 25\text{ MB/s}$ pada Wi-Fi 5/6).
+  - **Resiliensi Tinggi**: Mampu mendeteksi anomali jaringan dan menyediakan jalur panduan pemulihan instan.
 
 ---
 
 ## 4. Target Pengguna & Persona (Target Users & Stakeholders)
-- **Persona Utama**: Profesional kreatif, developer, mahasiswa, dan eksekutif yang menggunakan Mac (MacBook Air/Pro, Mac mini, iMac, Mac Studio) sebagai perangkat kerja utama dan Samsung Galaxy (Galaxy S Series, Z Fold/Flip, A Series, Galaxy Tab) sebagai perangkat seluler utama.
-- **Kebutuhan Pengguna**: Memindahkan foto, video rekaman 4K, dokumen PDF, teks, dan tautan antar perangkat secara instan dalam hitungan detik.
+- **Persona Utama**: Profesional kreatif, developer, desainer, dan mahasiswa yang bekerja aktif dengan MacBook/Mac desktop dan mengandalkan ponsel Samsung Galaxy atau perangkat Android modern.
+- **Skenario Kunci**:
+  - Mengirim rekaman video 4K berukuran $> 1\text{ GB}$ dari HP ke Mac untuk editing video.
+  - Mengirim berkas APK, dokumen PDF kerjaan, atau desain dari Mac ke ponsel klien dalam satu kali drag-and-drop.
+  - Berbagi tautan URL atau cuplikan teks panjang secara instan antar clipboard.
 
 ---
 
-## 5. Temuan Riset & Asumsi Kritis (Research & Critical Assumptions)
-1. **Keterbatasan Core Bluetooth macOS**:
-   - `CBPeripheralManager.startAdvertising(_:)` pada macOS secara keras menolak kunci `CBAdvertisementDataServiceDataKey`. Injeksi paket Service Data Fast Pair kustom (`0xFE2C`) ke kernel controller diblokir oleh SIP.
-   - **Solusi Tervalidasi**: Menggunakan mode resmi Samsung Quick Share *"Everyone for 10 minutes"*, di mana Samsung secara otomatis mempublikasikan layanan mDNS `_FC9F5ED42C8A._tcp.` di jaringan lokal. Mac dapat membaca data ini menggunakan `NWBrowser` dan memindai sinyal kedekatan BLE menggunakan `CBCentralManager`.
-2. **Ketiadaan Wi-Fi Direct pada macOS**:
-   - macOS hanya mendukung AWDL (milik Apple) dan mode infrastruktur Wi-Fi biasa.
-   - **Solusi Tervalidasi**: Komunikasi menggunakan Wi-Fi LAN bersama. Saat jaringan terisolasi atau di luar ruangan, aplikasi memicu fallback otomatis ke **Mobile Hotspot Samsung** atau **USB-C Tethering**.
-3. **Asumsi Protokol Quick Share**:
-   - Perangkat target Samsung menjalankan Android 10+ dengan Google Play Services / Quick Share One UI terpadu.
+## 5. Temuan Riset & Asumsi Kritis (Benchmarking 5 Repositori)
+
+| Repositori Referensi | Kontribusi Arsitektural Utama yang Diadopsi |
+| :--- | :--- |
+| **1. [leonboe1/QuickDrop](https://github.com/leonboe1/QuickDrop)** *(Utama)* | • Penggantian `NWListener.service` dengan `NetService` native untuk publikasi mDNS tanpa korupsi TXT record.<br>• Implementasi `NearbyBonjourServiceResolver` (resolusi asinkron IPv4/port via NetService delegate).<br>• Implementasi `NearbyHostLookup` (Reverse DNS PTR via `getnameinfo`) untuk mengungkap hostname perangkat.<br>• Mesin client `OutboundNearbyConnection` lengkap (Connection Request, UKEY2 Client Init, Paired Key Encryption, Introduction Frame, dan streaming chunk 512KB). |
+| **2. [ignotusbucius/open-quickshare](https://github.com/ignotusbucius/open-quickshare)** | • Pemahaman hierarki transport multi-tier (BLE discovery $\rightarrow$ Wi-Fi LAN $\rightarrow$ Hotspot fallback).<br>• Pola terminasi transfer tanpa data loss (`LAST_CHUNK` dengan penundaan disinkronisasi sebelum penutupan socket). |
+| **3. [Medformatik/CrossDrop](https://github.com/Medformatik/CrossDrop)** | • Mekanisme fallback QR Code pairing saat perangkat Android berada dalam mode kontak/tersembunyi.<br>• UX penanganan transfer teks & tautan URL clipboard langsung ke sistem operasi. |
+| **4. [Martichou/rquickshare](https://github.com/Martichou/rquickshare)** | • Arsitektur frame parsing multi-chunk yang tangguh terhadap segmentasi TCP.<br>• Mekanisme Keep-Alive heartbeat setiap 10 detik agar ponsel tidak memutuskan sesi di tengah berkas besar. |
+| **5. [grishka/NearDrop](https://github.com/grishka/NearDrop)** | • Spesifikasi dasar kriptografi UKEY2: HKDF-SHA256 derivation untuk D2D client/server keys, AES-256-CBC dengan PKCS7 padding, HMAC-SHA256 signature, dan serialisasi Protobuf `OfflineFrame`. |
 
 ---
 
@@ -55,118 +53,118 @@ Pengguna yang mengoperasikan ekosistem campuran—laptop macOS dan ponsel Samsun
 
 ### MoSCoW Scoping
 - **Must-Have (M)**:
-  - Penemuan otomatis perangkat Samsung via mDNS (`_FC9F5ED42C8A._tcp.`) dan BLE Central scanning (`CBCentralManager`).
-  - Pengiriman file dari Mac ke Samsung (UKEY2 Client Role, framing metadata, chunked streaming).
-  - Penerimaan file dari Samsung ke Mac (UKEY2 Server Role, refaktor NearDrop ke Swift Concurrency).
-  - Jendela Radar SwiftUI dengan visualisasi perangkat terdekat dan target drag-and-drop.
-  - Menu Bar status item dengan Drop Zone.
-  - Finder Share Extension (`com.apple.share-services`) untuk klik kanan di Finder.
-  - Mesin diagnosa jaringan (*Network Health Monitor*) dengan panduan otomatis AP Isolation.
-  - Dukungan fallback Mobile Hotspot dan USB-C Tethering.
+  - **FR-001**: Penerbitan mDNS `_FC9F5ED42C8A._tcp.` via `NetService` dengan format Instance Name 10-byte Base64 URL-safe (`0x23` prefix + 4B Endpoint ID + 3B hash `0xFC, 0x9F, 0x5E` + `0x00, 0x00`) dan TXT record `"n"` valid.
+  - **FR-002**: Resolusi target pengiriman menggunakan `NearbyBonjourServiceResolver` untuk mendapatkan socket IPv4 dan Port riil.
+  - **FR-003**: Pengiriman berkas Mac ➔ Samsung (UKEY2 Client Role, framing metadata, chunk stream 512 KB, keep-alive heartbeat).
+  - **FR-004**: Penerimaan berkas Samsung ➔ Mac (UKEY2 Server Role, validasi PIN, verifikasi chunk SHA-256, auto-accept / notifikasi sistem).
+  - **FR-005**: Sinkronisasi Clipboard Dua Arah (`Sharing_Nearby_TextMetadata` teks dan URL).
+  - **FR-006**: Antarmuka Hybrid (Jendela Radar SwiftUI animasi konsentris + Menu Bar Status Popover).
 - **Should-Have (S)**:
-  - Pengiriman multi-file sekaligus dan teks/URL mentah dari clipboard.
-  - Estimasi waktu transfer tersisa (*Time Remaining*) dan progress bar dinamis.
-  - Penamaan otomatis file duplikat (misal: `foto (1).jpg`) tanpa menimpa berkas lama.
+  - **FR-007**: Resolusi nama perangkat otomatis menggunakan Reverse DNS (`NearbyHostLookup`) saat ponsel dalam privacy mode.
+  - **FR-008**: Fallback QR Code pairing di layar Radar jika mDNS tidak menampilkan perangkat karena mode kontak.
+  - **FR-009**: Integrasi Finder Share Extension (`com.apple.share-services`) untuk opsi klik kanan berkas di macOS.
 - **Could-Have (C)**:
-  - Mode Fallback QR Code jika mDNS terblokir dan pengguna menolak menggunakan Hotspot.
-- **Won't-Have (W) / No-Gos**:
-  - 🚫 **No-Go**: Penulisan kernel extension (`.kext`) atau modifikasi private Bluetooth HCI yang mewajibkan penonaktifan SIP.
-  - 🚫 **No-Go**: Mengharuskan instalasi aplikasi pendamping (companion APK) pada perangkat Samsung.
-  - 🚫 **No-Go**: Membutuhkan akun cloud atau koneksi server eksternal di internet.
+  - **FR-010**: Pemilihan direktori penyimpanan khusus (custom download destination) dari Settings.
+- **Won't-Have / Strict No-Gos (W)**:
+  - 🚫 *No-Go*: Mengharuskan instalasi aplikasi APK tambahan di ponsel Samsung.
+  - 🚫 *No-Go*: Modifikasi driver kernel Bluetooth (`.kext`) atau meminta user mematikan SIP macOS.
+  - 🚫 *No-Go*: Layanan autentikasi akun cloud Google atau pelacakan telemetri eksternal.
+
+### Rabbit Holes & Mitigasi
+1. *Rabbit Hole*: Menulis BLE peripheral advertiser kustom di macOS untuk Fast Pair `0xFE2C`.
+   - *Mitigasi*: Dihindari sepenuhnya karena macOS Core Bluetooth memblokir Service Data kustom tanpa hak akses private entitlement Apple. Fokus 100% pada penemuan Wi-Fi mDNS mode "Everyone" & QR pairing.
+2. *Rabbit Hole*: Menggunakan `NWListener.service` untuk mDNS.
+   - *Mitigasi*: Menggunakan `NetService` Foundation secara terpisah seperti pada `leonboe1/QuickDrop`, terbukti 100% stabil.
 
 ---
 
 ## 7. Alur Pengguna Inti (Core User Journeys)
 
-### Alur 1: Mengirim Berkas dari Mac ke Samsung (Sender Journey)
+### Alur A: Mengirim Berkas dari Mac ke Samsung Galaxy
 ```
 [Pengguna Samsung]
-1. Buka Quick Settings -> Tekan tombol "Quick Share" -> Atur ke "Everyone for 10 minutes"
+1. Buka Quick Settings -> Quick Share -> Atur ke "Siapa saja selama 10 menit"
        │
        ▼
 [Pengguna Mac]
-2. Klik kanan file di Finder > Share > TossShare (atau seret file ke Jendela Radar TossShare)
-3. Radar menampilkan ikon dan nama perangkat Samsung (misal: "Galaxy S24 Ultra")
-4. Klik avatar "Galaxy S24 Ultra"
+2. Buka TossShare (Radar) atau seret berkas ke icon Menu Bar
+3. TossShare memindai Bonjour via NWBrowser dan NetServiceResolver
+4. Avatar HP Samsung muncul di Radar dengan nama aslinya
+5. Drag & drop berkas ke avatar Samsung
        │
        ▼
-[Ponsel Samsung]
-5. Muncul prompt dialog bawaan: "MacBook Pro ingin membagikan 3 file [Tolak] [Terima]"
-6. Pengguna Samsung menekan "Terima"
+[Protokol TossShare (Sender)]
+6. Buka TCP socket ke target -> Kirim ConnectionRequestFrame
+7. Jalankan UKEY2 Client Init -> Terima Server Init -> Selesaikan UKEY2 Finish
+8. Kirim PairedKeyEncryption & PairedKeyResult (status UNABLE)
+9. Kirim IntroductionFrame (daftar berkas & ukuran)
        │
        ▼
-[Transfer Berjalan]
-7. Data streaming berkecepatan tinggi via Wi-Fi lokal dengan indikator progress
-8. Selesai: Checkmark sukses di Mac, file tersimpan di galeri/folder Downloads Samsung
+[Layar Samsung]
+10. Muncul prompt sistem: "MacBook Pro ingin membagikan 1 berkas [Tolak] [Terima]"
+11. Pengguna tap "Terima" -> Samsung membalas response ACCEPT
+       │
+       ▼
+[Transfer Berkas]
+12. TossShare streaming chunk 512KB + kirim Frame EOF (flags = 1)
+13. Berkas tersimpan di Samsung, jendela Radar menampilkan animasi sukses.
 ```
 
-### Alur 2: Menerima Berkas dari Samsung ke Mac (Receiver Journey)
-1. Aplikasi TossShare aktif di background / Menu Bar Mac.
-2. Pengguna Samsung memilih berkas di ponsel > tekan tombol **Share** > pilih **Quick Share**.
-3. Nama Mac pengguna (misal: *"MacBook Pro M1"*) langsung muncul di daftar Quick Share Samsung.
-4. Pengguna Samsung memilih Mac tersebut.
-5. Mac menampilkan notifikasi sistem native: *"Galaxy S24 Ultra ingin mengirim 1 file. [Decline] [Accept]"*.
-6. Pengguna Mac menekan **"Accept"**; berkas tersimpan otomatis di `~/Downloads`.
-
-### Alur 3: Penanganan Fallback Saat AP Isolation / Tanpa Router
-1. Pengguna mencoba mengirim file di kafe dengan Wi-Fi publik.
-2. Mesin diagnosa TossShare mendeteksi sambungan TCP ke Samsung diblokir oleh router (AP Isolation).
-3. TossShare otomatis menampilkan kartu panduan fallback di Radar UI:
-   - *"Wi-Fi publik memblokir koneksi lokal. Silakan aktifkan Mobile Hotspot di Samsung Anda, lalu hubungkan Mac Anda."*
-4. Pengguna menyalakan Hotspot di Samsung -> Mac otomatis tersambung.
-5. Radar TossShare otomatis mendeteksi koneksi baru -> status berubah menjadi hijau -> transfer berjalan lancar tanpa menggunakan kuota data seluler.
+### Alur B: Mengirim Berkas dari Samsung Galaxy ke Mac
+```
+[Pengguna Samsung]
+1. Pilih foto/video di Samsung -> Tap "Bagikan" -> "Quick Share"
+2. Mac terdeteksi di daftar Quick Share (berkat siaran NetService 10-byte Base64)
+3. Tap avatar Mac
+       │
+       ▼
+[TossShare di Mac (Receiver)]
+4. Menerima koneksi TCP -> Lakukan handshake UKEY2 & tangkap nama asli HP
+5. Notifikasi sistem macOS muncul: "[Nama HP] ingin mengirimkan [Nama Berkas] [Terima] [Tolak]"
+6. Pengguna Mac klik "Terima" (atau auto-accept jika diaktifkan)
+7. Aliran chunk diterima -> Verifikasi SHA-256 -> Tersimpan di ~/Downloads
+```
 
 ---
 
 ## 8. Diagram Alur Layar & UI Wireframe
 
+### Screen Flow Diagram
 ```mermaid
 graph TD
-    A[Finder / Desktop] -->|Klik Kanan > Share| B[Finder Share Extension]
-    A -->|Seret File ke Status Bar| C[Menu Bar Drop Zone]
-    A -->|Buka TossShare.app| D[Jendela Utama Radar UI]
+    A[Launch TossShare] --> B{Pilih Moda Operasi}
+    B -->|Jendela Utama| C[RadarMainView: Animasi Gelombang Konsentris]
+    B -->|Latar Belakang| D[MenuBarPopover: Status Item di Tray]
     
-    B --> E[Radar Device Picker]
-    C --> D
+    C -->|Deteksi Otomatis| E[Daftar Avatar Perangkat Terdekat]
+    C -->|Fallback Privasi| F[Tombol 'Tampilkan QR Pairing']
     
-    D -->|Deteksi Otomatis| F[Avatar Samsung Terdeteksi]
-    E -->|Deteksi Otomatis| F
+    E -->|Drag & Drop Berkas| G[Modal Transfer Progress: Byte Rate, Time Remaining]
+    E -->|Klik Kanan| H[Kirim Teks Clipboard]
     
-    F -->|Pilih Target| G[Handshake Kriptografi UKEY2]
-    G --> H{Menunggu Respon Samsung}
-    H -->|Diterima| I[Streaming Data Chunks]
-    H -->|Ditolak/Timeout| J[Tampilkan Status Batal]
-    
-    I --> K[Transfer Selesai: Checkmark Sukses]
-    
-    D -.->|AP Isolation Terdeteksi| L[Tampilkan FallbackGuideCard]
-    L -.->|Nyalakan Hotspot/Kabel| F
+    G -->|Sukses| I[Haptic Feedback & Notifikasi Selesai]
+    G -->|Gagal/Timeout| J[Connectivity Advisor: Deteksi AP-Isolation & Hotspot Guide]
 ```
 
-### ASCII Wireframe: Jendela Radar SwiftUI
-```
+### ASCII Wireframe: RadarMainView
+```text
 +-------------------------------------------------------------+
-|  [●][●][●]                  TossShare                  [⚙]  |
+|  TossShare                        [Settings]  [QR Pairing]  |
+|  Status: Aktif Memindai Wi-Fi                              |
 +-------------------------------------------------------------+
 |                                                             |
 |                         ( ( (   ) ) )                       |
+|                   [ Galaxy A54 Bimo ]                       |
+|                         ( (   ) )                           |
+|                    [ Galaxy S24 Ultra ]                     |
 |                                                             |
-|                    +---------------------+                  |
-|                    |     📱 Galaxy S24   |                  |
-|                    |     192.168.1.105   |                  |
-|                    |     [Siap Terima]   |                  |
-|                    +---------------------+                  |
-|                                                             |
-|             +-------------+                                 |
-|             |  📱 Tab S9  |                                 |
-|             +-------------+                                 |
+|                      [  Mac (Anda)  ]                       |
 |                                                             |
 |                                                             |
-|    [  Tarik & Lepas File ke Avatar untuk Mengirim  ]        |
-|                                                             |
+|           "Seret berkas ke avatar untuk mengirim"           |
 +-------------------------------------------------------------+
-|  Status: Memindai perangkat Wi-Fi lokal...                  |
-|  💡 Pastikan Quick Share Samsung aktif (Everyone 10 min)   |
+|  Clipboard Terkini: "https://github.com/..."                |
+|  [ Kirim Clipboard ke Galaxy A54 ]                          |
 +-------------------------------------------------------------+
 ```
 
@@ -176,127 +174,114 @@ graph TD
 
 ```mermaid
 erDiagram
-    PEER_DEVICE ||--o{ TRANSFER_SESSION : engages_in
-    TRANSFER_SESSION ||--|{ TRANSFER_ITEM : contains
-    
+    PEER_DEVICE ||--o{ TRANSFER_SESSION : participates_in
     PEER_DEVICE {
-        string endpointId PK "Endpoint ID acak 4 karakter"
-        string friendlyName "Nama perangkat (Galaxy S24 Ultra)"
-        string deviceType "Phone, Tablet, Laptop"
-        string ipAddress "IP lokal jaringan Wi-Fi"
-        int port "Port TCP Quick Share"
-        datetime lastSeen "Waktu deteksi terakhir"
-        int rssi "Kekuatan sinyal BLE (jika ada)"
+        string id PK
+        string endpointId
+        string friendlyName
+        string hostIPv4
+        int port
+        string deviceType
+        datetime lastSeen
+        boolean isPrivacyMode
     }
-    
+    TRANSFER_SESSION ||--|{ TRANSFER_ITEM : contains
     TRANSFER_SESSION {
-        string sessionId PK "UUID unik sesi transfer"
-        string direction "OUTGOING (Kirim) / INCOMING (Terima)"
-        string state "CONNECTING, AUTHENTICATING, TRANSFERRING, COMPLETED, FAILED"
-        string authPin "4-digit verification token PIN"
-        datetime startTime "Waktu mulai transfer"
-        datetime endTime "Waktu selesai"
-        int totalBytes "Total ukuran muatan"
-        int transferredBytes "Ukuran yang telah terkirim"
+        string sessionId PK
+        string peerDeviceId FK
+        string transferDirection
+        string sessionState
+        int64 totalBytes
+        int64 transferredBytes
+        float progress
+        string ukeyVerificationPin
+        datetime createdAt
     }
-    
     TRANSFER_ITEM {
-        string itemId PK "ID unik file/item"
-        string fileName "Nama file lengkap (misal video.mp4)"
-        string mimeType "Tipe media MIME"
-        int fileSize "Ukuran file dalam bytes"
-        string localPath "Lokasi file di disk Mac"
-        string checksum "SHA-256 hash file untuk verifikasi"
+        string itemId PK
+        string sessionId FK
+        string fileName
+        int64 fileSize
+        string mimeType
+        string sha256Checksum
+        string localDestinationPath
     }
 ```
 
 ---
 
 ## 10. Persyaratan Fungsional (Functional Requirements)
-- **FR-001 (mDNS Browser)**: Aplikasi wajib memindai layanan mDNS `_FC9F5ED42C8A._tcp.` pada seluruh antarmuka jaringan lokal aktif menggunakan `NWBrowser`.
-- **FR-002 (Endpoint Decoding)**: Aplikasi wajib mengurai TXT record `n` untuk mengekstrak identitas perangkat, nama pengguna (*friendly name*), dan tipe perangkat target (Phone/Tablet).
-- **FR-003 (UKEY2 Client Role)**: Aplikasi wajib mengimplementasikan jabat tangan UKEY2 peran Klien: membangkitkan `ClientInit`, memproses `ServerInit`, menurunkan kunci otentikasi bersama via HKDF-SHA256, menghitung 4-digit verification token PIN, dan mengirim `ClientFinish`.
-- **FR-004 (Framing Metadata)**: Aplikasi wajib mengonstruksi protobuf `ConnectionRequestFrame` dan `IntroductionFrame` yang membawa informasi detail berkas (nama, ukuran, MIME type).
-- **FR-005 (Acceptance Handling)**: Aplikasi wajib memvalidasi respon penerimaan (`AcceptanceFrame`) dari perangkat Samsung sebelum memulai transfer muatan biner.
-- **FR-006 (Chunked Streaming)**: Aplikasi wajib mengalirkan berkas secara *chunked streaming* (buffer 512KB per blok) yang dienkripsi dengan frame UKEY2 untuk membatasi konsumsi memori RAM sistem (< 50 MB).
-- **FR-007 (Finder Share Extension)**: Aplikasi wajib menyertakan target ekstensi Finder Share (`com.apple.share-services`) yang terintegrasi langsung dengan menu klik kanan macOS.
-- **FR-008 (Receiver Server Engine)**: Aplikasi wajib menyediakan server penerima berbasis `NWListener` (adaptasi NearDrop dengan Swift Concurrency) untuk menerima kiriman dari Samsung.
-- **FR-009 (Network Health Monitor)**: Aplikasi wajib memantau status jaringan dan mendeteksi kondisi AP Isolation atau pemblokiran soket lokal secara otomatis.
-- **FR-010 (Fallback Advisor)**: Aplikasi wajib menyajikan instruksi peralihan otomatis ke Mobile Hotspot atau USB-C Tethering saat kondisi jaringan terisolasi.
+- **FR-001 (mDNS Publication)**: Sistem wajib mempublikasikan layanan Bonjour `_FC9F5ED42C8A._tcp.` menggunakan `NetService` dengan instance name 10-byte Base64 URL-safe dan TXT record key `"n"` berisi EndpointInfo terenkripsi/terformat Base64 URL-safe.
+- **FR-002 (Target Resolution)**: Sistem wajib menyelesaikan alamat IP dan Port target menggunakan `NearbyBonjourServiceResolver` dengan batas timeout resolusi 1.5 detik.
+- **FR-003 (Dynamic Name Detection)**: Sistem wajib menangkap nama riil perangkat dari `ConnectionRequestFrame.endpointName` atau Reverse DNS (`NearbyHostLookup`) saat metadata mDNS kosong.
+- **FR-004 (UKEY2 Handshake)**: Sistem wajib mengimplementasikan handshaking kriptografi UKEY2 lengkap (Curve P-256, SHA-512 commitment, HKDF-SHA256, AES-256-CBC, HMAC-SHA256).
+- **FR-005 (Bidirectional Streaming)**: Sistem wajib mendukung pengiriman dan penerimaan berkas dalam ukuran chunk 512 KB dengan penandaan frame `LAST_CHUNK` (flags & 1 == 1) pada akhir payload.
+- **FR-006 (Clipboard Sync)**: Sistem wajib menyinkronkan data teks/URL antara clipboard macOS (`NSPasteboard.general`) dan frame `Sharing_Nearby_TextMetadata`.
+- **FR-007 (Network Diagnosis)**: Sistem wajib mendeteksi isolasi jaringan (*AP Isolation*) saat socket TCP gagal merespons, dan menyajikan panduan pengaktifan Mobile Hotspot / USB-C Tethering.
 
 ---
 
 ## 11. Persyaratan Non-Fungsional (Non-Functional Requirements)
-- **NFR-001 (Performa Throughput)**: Kecepatan transfer pada jaringan Wi-Fi 5GHz/6GHz harus mampu mencapai minimal 25 MB/s, dan pada kabel USB-C mencapai minimal 250 MB/s.
-- **NFR-002 (Kompatibilitas Sistem)**: Mendukung macOS 13.0 (Ventura), 14.0 (Sonoma), dan 15.0+ (Sequoia) sebagai Universal Binary (arm64 Apple Silicon & x86_64 Intel).
-- **NFR-003 (Keamanan & Privasi)**: Seluruh komunikasi data wajib dienkripsi end-to-end (ECDH Curve P-256 + AES-GCM 128/256-bit). Data berpindah secara langsung *peer-to-peer* lokal tanpa melibatkan server pihak ketiga mana pun (mematuhi UU PDP).
-- **NFR-004 (Integritas macOS)**: Aplikasi tidak boleh memerlukan hak administrator (`root`), instalasi kext, atau penonaktifan System Integrity Protection (SIP).
-- **NFR-005 (Efisiensi Sumber Daya)**: Penggunaan CPU saat idle harus < 0.5% dan penggunaan RAM < 60 MB.
+- **NFR-001 (Performa)**: Throughput transfer berkas lokal wajib mencapai $> 25\text{ MB/s}$ pada jaringan Wi-Fi 5 GHz standar.
+- **NFR-002 (Keamanan)**: Seluruh pertukaran data payload wajib terenkripsi end-to-end tanpa kunci statis (ephemeral session keys).
+- **NFR-003 (Kompatibilitas)**: Mendukung macOS 13.0 (Ventura) ke atas pada arsitektur Apple Silicon (arm64) dan Intel (x86_64) secara native tanpa Rosetta.
+- **NFR-004 (Stabilitas Memory)**: Penggunaan RAM tidak boleh melebihi 80 MB saat idle di Menu Bar dan tidak ada memory leak saat streaming berkas berukuran gigabyte berkat *chunking buffer* 512 KB.
 
 ---
 
 ## 12. Aturan Bisnis (Business Rules)
-- **BR-001 (Resolusi Duplikasi File)**: Jika file yang diterima memiliki nama yang identik dengan file di folder tujuan, sistem menambahkan nomor urut otomatis (misal: `laporan (1).pdf`) tanpa menimpa file yang sudah ada.
-- **BR-002 (Pembersihan File Batal)**: Jika transfer dibatalkan atau terputus di tengah jalan, seluruh file temporer yang belum tuntas wajib dihapus dari disk secara bersih.
-- **BR-003 (Opsi Folder Tujuan)**: Folder penyimpanan default adalah `~/Downloads`, namun pengguna dapat mengubah folder tujuan melalui menu Pengaturan.
+- **BR-001 (Penanganan File Duplikat)**: Jika berkas dengan nama yang sama sudah ada di folder tujuan, sistem wajib menambahkan nomor urut increment (contoh: `foto (1).jpg`) tanpa menimpa berkas asli.
+- **BR-002 (Pembersihan File Batal)**: Jika transfer dibatalkan di tengah jalan, seluruh file parsial wajib segera dihapus dari disk secara aman.
+- **BR-003 (Auto-Accept Toggle)**: Fitur auto-accept hanya dapat diaktifkan secara eksplisit oleh pengguna di menu pengaturan untuk mencegah penerimaan berkas liar tanpa izin.
 
 ---
 
 ## 13. Persyaratan UX & Aksesibilitas
-- Animasi radar konsentris SwiftUI yang responsif dengan haptic feedback pada trackpad Mac.
-- Tampilan status real-time: indikator kecepatan transfer (MB/s), persentase progress bar, dan estimasi waktu tersisa (*time remaining*).
-- Dukungan otomatis mode tampilan Dark Mode dan Light Mode sesuai preferensi macOS.
+- Mengikuti standar desain Human Interface Guidelines macOS.
+- Target klik/sentuh minimum 44x44 pt.
+- Dukungan VoiceOver untuk pembacaan nama perangkat terdekat dan status transfer.
+- Animasi gelombang radar halus 60 fps dengan adaptasi tema Dark Mode dan Light Mode otomatis.
 
 ---
 
-## 14. Edge Cases, Penanganan Error & Strategi Fallback Bertingkat
-1. **AP / Client Isolation**:
-   - Jika mDNS terdeteksi namun koneksi TCP gagal dibuka, sistem menampilkan kartu `FallbackGuideCard`: menyarankan menyalakan Mobile Hotspot di Samsung.
-2. **Ketiadaan Router (Luar Ruangan)**:
-   - Pengguna menyalakan Mobile Hotspot di Samsung -> Mac terhubung -> terbentuk subnet lokal pribadi (`192.168.43.x`) -> transfer berjalan normal tanpa menggunakan kuota data seluler.
-3. **Transfer Berkas Raksasa (> 20 GB)**:
-   - Pengguna dapat menghubungkan kabel USB-C dan mengaktifkan USB Tethering di Samsung untuk kecepatan transfer kabel USB 3.0 (300–800 MB/s).
-4. **Timeout Persetujuan**:
-   - Jika pengguna Samsung tidak menekan tombol "Terima" dalam 60 detik, Mac membatalkan sesi transfer secara anggun (*graceful timeout*).
+## 14. Edge Cases & Penanganan Error
+1. **Ponsel Terkunci / Layar Mati**: Saat transfer tertahan di `.waitingAcceptance`, tampilkan instruksi: *"Pastikan layar HP menyala dan kunci layar terbuka."*
+2. **Wi-Fi Terputus di Tengah Transfer**: Socket mendeteksi EOF premature, session dibersihkan, dan pengguna diberikan opsi "Coba Lagi".
+3. **Penyimpanan Mac Penuh**: Server merespons frame respons dengan status `NOT_ENOUGH_SPACE` sehingga ponsel mengetahui penyebab penolakan secara jelas.
 
 ---
 
-## 15. Metrik Keberhasilan (Success Metrics / KPIs)
-- **Tingkat Keberhasilan Penemuan**: > 95% perangkat Samsung dalam mode "Everyone 10 min" terdeteksi dalam waktu < 2 detik di jaringan lokal.
-- **Tingkat Keberhasilan Transfer**: > 98% transfer file berhasil tanpa korupsi data (diverifikasi dengan checksum SHA-256).
-- **Waktu Inisiasi**: Pengguna dapat memicu pengiriman file dari Finder dalam waktu < 5 detik.
+## 15. Metrik Keberhasilan (KPIs)
+- **Tingkat Keberhasilan Transfer**: $> 95\%$ transfer berkas selesai tanpa error pada jaringan yang sama.
+- **Waktu Deteksi**: $< 1.5$ detik dari saat Quick Share dibuka hingga Mac/HP muncul di layar.
+- **NPS / Kepuasan Pengguna**: Rating pengalaman transfer menyamai kecepatan dan kenyamanan AirDrop.
 
 ---
 
 ## 16. Risiko, Mitigasi & Hasil Pre-Mortem
-- **Risiko 1 (Batas Waktu 10 Menit Quick Share)**:
-  - *Akar Masalah*: Pengguna lupa bahwa toggle "Everyone" di Samsung otomatis nonaktif setelah 10 menit.
-  - *Mitigasi*: Menampilkan teks bantuan persisten di antarmuka radar: *"Pastikan Quick Share di Samsung aktif ke 'Everyone for 10 min'"*.
-- **Risiko 2 (Pembaruan Protokol Google/Samsung)**:
-  - *Akar Masalah*: Perubahan skema protobuf atau parameter cipher TLS pada pembaruan Android mendatang.
-  - *Mitigasi*: Arsitektur framing protokol diisolasi secara modular (`DropCore/Protocol`) sehingga mudah diperbarui tanpa mengganggu logika antarmuka dan jaringan.
+- **Risiko Utama**: Kegagalan koneksi akibat AP Isolation di router publik.
+- **Mitigasi**: Deteksi proaktif timeout soket TCP, diagnostik real-time, dan panduan visual instan untuk mengaktifkan Mobile Hotspot Samsung.
 
 ---
 
 ## 17. Kriteria Penerimaan (Acceptance Criteria)
 
-#### Skenario 1: Penemuan Otomatis Samsung
-- **Given**: Pengguna membuka Radar TossShare di Mac dan perangkat Samsung mengaktifkan Quick Share "Everyone for 10 minutes" pada Wi-Fi yang sama.
-- **When**: Mac memindai jaringan lokal.
-- **Then**: Avatar dan nama perangkat Samsung muncul di Radar Mac dalam waktu < 2 detik tanpa QR Code.
+### AC-1: Penemuan & Visibilitas Dua Arah
+- **Given**: Mac menjalankan TossShare v2.0 dan ponsel Samsung Galaxy A54 mengaktifkan Quick Share "Siapa Saja".
+- **When**: Pengguna membuka menu Quick Share di Samsung dan jendela Radar di Mac.
+- **Then**: Mac muncul di daftar Quick Share Samsung dengan nama asli Mac, dan Samsung muncul di jendela Radar Mac dalam waktu $< 2.0$ detik.
 
-#### Skenario 2: Mengirim Berkas Sukses
-- **Given**: Berkas video sebesar 2 GB dipilih di Mac dan perangkat Samsung telah terdeteksi.
-- **When**: Pengguna mengklik target Samsung dan menekan "Terima" pada layar ponsel Samsung.
-- **Then**: Berkas ditransfer dengan kecepatan penuh Wi-Fi, tersimpan utuh di folder penyimpanan Samsung, dan status Mac menampilkan centang sukses.
+### AC-2: Pengiriman Berkas Mac ke Samsung (Full Chunking)
+- **Given**: Pengguna menyeret berkas video 500 MB ke avatar Samsung di jendela Radar.
+- **When**: Pengguna Samsung menekan tombol "Terima" pada dialog konfirmasi bawaan One UI.
+- **Then**: Aliran chunk 512 KB terkirim dengan progress bar dinamis, frame EOF dikirimkan, notifikasi selesai muncul di kedua perangkat, dan integritas berkas terverifikasi 100%.
 
-#### Skenario 3: Penanganan Fallback AP Isolation
-- **Given**: Mac dan Samsung terhubung ke Wi-Fi publik yang mengaktifkan AP Isolation.
-- **When**: Pengguna mencoba mengirim berkas.
-- **Then**: TossShare mendeteksi kegagalan soket dan menampilkan panduan beralih ke Mobile Hotspot dalam 2 langkah mudah.
+### AC-3: Fallback AP Isolation & Health Diagnostic
+- **Given**: Perangkat berada di jaringan Wi-Fi hotel dengan port TCP antar-klien diblokir.
+- **When**: Pengguna mencoba mengirim berkas ke Samsung dan koneksi TCP timeout.
+- **Then**: TossShare tidak crash, status berubah menjadi `.failed(reason: .apIsolationBlocked)`, dan jendela popover memunculkan panduan interaktif 2-langkah mengaktifkan Mobile Hotspot Samsung.
 
 ---
 
 ## 18. Pertanyaan Terbuka & Next Steps
-- Seluruh keputusan arsitektur kunci telah disepakati dan divalidasi.
-- Langkah selanjutnya adalah eksekusi implementasi kode berdasarkan dokumen handoff teknis di `docs/coding-handoff.md`.
+- Implementasi refaktor modul `NetService` dan `NearbyBonjourServiceResolver` sesuai panduan di `docs/coding-handoff.md`.

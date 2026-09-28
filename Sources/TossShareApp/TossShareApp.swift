@@ -38,7 +38,10 @@ struct TossShareApp: App {
         self.receiverServer = server
 
         server.onRequestAcceptance = { session in
-            let dummySender = PeerDevice(
+            let peer = await MainActor.run {
+                DeviceRegistry.shared.getDevice(byEndpointId: session.peerEndpointId)
+            }
+            let sender = peer ?? PeerDevice(
                 endpointId: session.peerEndpointId,
                 friendlyName: "Samsung Device",
                 deviceType: .phone,
@@ -47,24 +50,26 @@ struct TossShareApp: App {
             )
             return await TransferNotificationManager.shared.requestAcceptance(
                 session: session,
-                from: dummySender
+                from: sender
             )
         }
 
         server.onTransferCompleted = { session in
-            let dummySender = PeerDevice(
-                endpointId: session.peerEndpointId,
-                friendlyName: "Samsung Device",
-                deviceType: .phone,
-                ipAddress: "127.0.0.1",
-                port: 44445
-            )
             Task { @MainActor in
+                let peer = DeviceRegistry.shared.getDevice(byEndpointId: session.peerEndpointId)
+                let sender = peer ?? PeerDevice(
+                    endpointId: session.peerEndpointId,
+                    friendlyName: "Samsung Device",
+                    deviceType: .phone,
+                    ipAddress: "127.0.0.1",
+                    port: 44445
+                )
                 let urls = session.items.compactMap { $0.localURL }
                 TransferNotificationManager.shared.postTransferSuccess(
                     session: session,
-                    from: dummySender,
-                    savedURLs: urls
+                    from: sender,
+                    savedURLs: urls,
+                    targetFolder: session.savedDirectory
                 )
             }
         }

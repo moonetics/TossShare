@@ -38,6 +38,9 @@ public struct TransferSession: Identifiable, Codable, Sendable, Equatable {
     /// Daftar manifest berkas yang termasuk dalam sesi ini.
     public var items: [TransferItem]
 
+    /// Direktori penyimpanan batch khusus jika transfer terdiri dari banyak berkas.
+    public var savedDirectory: URL?
+
     /// Pesan deskriptif jika sesi mengalami kegagalan (state == .failed).
     public var errorMessage: String?
 
@@ -64,6 +67,7 @@ public struct TransferSession: Identifiable, Codable, Sendable, Equatable {
         transferredBytes: Int64 = 0,
         speedBytesPerSecond: Double = 0.0,
         items: [TransferItem] = [],
+        savedDirectory: URL? = nil,
         errorMessage: String? = nil
     ) {
         self.sessionId = sessionId
@@ -77,6 +81,7 @@ public struct TransferSession: Identifiable, Codable, Sendable, Equatable {
         self.transferredBytes = transferredBytes
         self.speedBytesPerSecond = speedBytesPerSecond
         self.items = items
+        self.savedDirectory = savedDirectory
         self.errorMessage = errorMessage
     }
 

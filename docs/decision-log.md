@@ -1,71 +1,59 @@
-# Decision Log & Pre-Mortem Analysis: TossShare for macOS
+# Decision Log: TossShare v2.0
 
-Dokumen ini mencatat keputusan arsitektural, analisis komparatif, evaluasi trade-off, alternatif yang ditolak, serta hasil analisis Pre-Mortem untuk proyek **TossShare for macOS**.
+Dokumen ini mencatat keputusan arsitektural utama, kompromi (*trade-offs*), hasil analisis Pre-Mortem, dan alternatif yang ditolak selama proses perancangan produk.
 
 ---
 
-## 1. Log Keputusan Arsitektur Kunci
+## 1. Keputusan Arsitektural Utama
 
-### Keputusan 1: Pola Penemuan Perangkat Samsung
+### DEC-001: Penggunaan `NetService` Native untuk Publikasi mDNS
 - **Tanggal**: 2026-09-28
-- **Status**: Disetujui
-- **Keputusan**: Menggunakan mode penemuan native Quick Share *"Everyone for 10 minutes"* pada Samsung, dikombinasikan dengan mDNS Browser (`_FC9F5ED42C8A._tcp.`) dan BLE Central Scanner (`CBCentralManager`) di macOS.
-- **Alternatif yang Ditolak**:
-  - *Memaksa injeksi Service Data Fast Pair kustom (`0xFE2C`) dari Mac via `CBPeripheralManager`*: Ditolak karena Apple secara keras melarang kunci `CBAdvertisementDataServiceDataKey` dalam API publik.
-  - *Menggunakan IOBluetoothHCIUserClient / Driver Kext*: Ditolak karena memerlukan penonaktifan SIP (System Integrity Protection), memicu kernel panic pada chip SoC Apple Silicon (M1/M2/M3/M4), dan merusak portabilitas lintas Mac.
-- **Trade-off**: Pengguna Samsung perlu memastikan toggle Quick Share aktif ke "Everyone for 10 min" saat ingin menerima file dari Mac. Sebagai gantinya, aplikasi 100% aman, stabil, tidak memerlukan hak akses root, dan kompatibel di semua Mac modern.
+- **Konteks**: Pada macOS, penggunaan `NWListener.service` dari Network.framework memiliki bug terbukti di mana TXT record `"n"` kerap kali tidak terkirim atau instance name terpotong, menyebabkan Android Nearby Connections scanner mengabaikan Mac.
+- **Keputusan**: Mengadopsi arsitektur teruji dari **`leonboe1/QuickDrop`** dan **`grishka/NearDrop`**, yaitu menggunakan `NetService` langsung dari Foundation / Darwin mDNSResponder API.
+- **Konsekuensi & Trade-off**:
+  - *Positif*: TXT record `"n"` dan instance name 10-byte Base64 URL-safe dipublikasikan secara andal ke seluruh antarmuka lokal tanpa modifikasi tak terduga.
+  - *Negatif*: Memerlukan pengelolaan delegate Objective-C (`NetServiceDelegate`), yang dibungkus rapi dalam kelas Swift terisolasi.
 
----
-
-### Keputusan 2: Strategi Jaringan Bertingkat & Sistem Fallback
+### DEC-002: Resolusi Alamat Target via `NearbyBonjourServiceResolver`
 - **Tanggal**: 2026-09-28
-- **Status**: Disetujui
-- **Keputusan**: Mengadopsi arsitektur jaringan 3 tingkat:
-  - **Tingkat 1**: Wi-Fi LAN Lokal (Kondisi normal di rumah/kantor).
-  - **Tingkat 2 (Fallback Nirkabel)**: Mobile Hotspot Samsung saat terjadi AP Isolation di router publik atau saat di luar ruangan tanpa router.
-  - **Tingkat 3 (Fallback Fisik)**: USB-C Tethering untuk pengiriman file raksasa (> 20 GB) atau kondisi darurat.
-- **Rasional**: macOS tidak mendukung protokol Wi-Fi Direct bawaan Samsung (hanya mendukung AWDL Apple). Personal Hotspot Samsung otomatis menciptakan subnet lokal pribadi (`192.168.43.x`) tanpa menggunakan kuota data seluler.
-- **Trade-off**: Di jaringan publik dengan AP Isolation, pengguna perlu menyalakan Mobile Hotspot di ponselnya. Aplikasi menyediakan kartu panduan visual untuk menyederhanakan proses ini menjadi 2 langkah mudah.
+- **Konteks**: Saat mengirim berkas ke Android, aplikasi membutuhkan alamat IPv4 riil dan port tujuan perangkat penerima. `NWBrowser.Result` sering kali hanya menyediakan representasi abstrak endpoint tanpa IP langsung.
+- **Keputusan**: Mengimplementasikan `NearbyBonjourServiceResolver` (seperti pada `QuickDrop`) yang menyelesaikan alamat target via `NetService.resolve(withTimeout:)` dan mem-parsing struktur `sockaddr` IPv4 secara aman.
 
----
-
-### Keputusan 3: Desain Pengalaman Pengguna (UI/UX Parity dengan AirDrop)
+### DEC-003: Reverse DNS Hostname Lookup untuk Privacy Mode
 - **Tanggal**: 2026-09-28
-- **Status**: Disetujui
-- **Keputusan**: Mengimplementasikan antarmuka terpadu:
-  1. Jendela Radar animasi konsentris SwiftUI (seperti AirDrop di Finder).
-  2. Menu Bar status item dengan area Drop Zone (seret-lepas file).
-  3. Finder Share Extension (`com.apple.share-services`) untuk klik kanan langsung di Finder.
-- **Alternatif yang Ditolak**:
-  - *Hanya Share Extension tanpa aplikasi utama*: Ditolak karena pengguna membutuhkan jendela visual untuk memantau status perangkat dan riwayat transfer.
-  - *Aplikasi Menu Bar murni tanpa Radar*: Ditolak karena pengalaman pengguna terasa kurang imersif dibanding standar AirDrop.
+- **Konteks**: Saat Samsung Galaxy diatur ke "Contacts Only", metadata nama di mDNS disembunyikan.
+- **Keputusan**: Menggunakan modul `NearbyHostLookup` (Reverse DNS PTR via `getnameinfo`) pada IP target untuk mengekstrak hostname riil (contoh: `Galaxy-A54.local`), menyajikan nama yang bermakna bagi pengguna sebelum transfer dimulai.
 
----
-
-### Keputusan 4: Kriptografi & Manajemen Aliran Data
+### DEC-004: Strategi Mode Privasi & QR Code Fallback
 - **Tanggal**: 2026-09-28
-- **Status**: Disetujui
-- **Keputusan**: Menggunakan `CryptoKit` bawaan macOS untuk Curve P-256 ECDH, HKDF-SHA256, dan cipher AES-GCM (protokol Google UKEY2). Data biner dialirkan secara *chunked streaming* dengan buffer 512KB per blok.
-- **Rasional**: `CryptoKit` teroptimasi secara perangkat keras (hardware-accelerated) pada chip Apple Silicon dan Intel AES-NI. Model *chunked streaming* memastikan konsumsi memori RAM tetap sangat rendah (< 60 MB) bahkan ketika mentransfer file berukuran hingga 100 GB.
+- **Konteks**: Beberapa pengguna Samsung memilih tidak mengaktifkan "Everyone for 10 minutes".
+- **Keputusan**: Mendukung jalur utama zero-config (mode "Siapa Saja") dan menyediakan tombol fallback **"Tampilkan QR Pairing"** (mengadopsi konsep `CrossDrop`) jika pengguna ingin melakukan pairing manual saat ponsel dalam mode kontak.
 
----
-
-### Keputusan 5: Penamaan & Branding Produk (TossShare)
+### DEC-005: Two's Complement Integer Encoding untuk Kunci Publik UKEY2 (P-256)
 - **Tanggal**: 2026-09-28
-- **Status**: Disetujui
-- **Keputusan**: Mengadopsi nama merek resmi **TossShare** (Bundle ID: `com.tossshare.macos` / target `TossShareApp`).
-- **Rasional**: Menggabungkan metafora fisik *"Toss"* (melempar berkas dengan santai ke perangkat di sebelah pada Radar UI) dengan *"Share"* (selaras dengan ekosistem Quick Share / Nearby Share Android). Nama ini tegas, modern, mudah diingat, dan memiliki identitas jelas di macOS.
-- **Alternatif yang Dievaluasi**: *Drop* (terlalu generik), *StarDrop* (filosofis Samsung "Three Stars"), *Fling*, *CrossDrop*. Diputuskan: **TossShare**.
+- **Konteks**: Saat Samsung Galaxy One UI Quick Share menerima `Ukey2ServerInit` atau `Ukey2ClientFinish`, Android men-decode koordinat X dan Y pada `EcP256PublicKey` menggunakan `new BigInteger(byte[])` Java. Jika bit paling signifikan (MSB) bernilai 1 (byte[0] >= 0x80) dan tidak disisipkan byte `0x00`, Java menginterpretasikannya sebagai bilangan negatif (dua's complement negatif) sehingga titik kurva eliptis dianggap tidak valid (`point not on curve`) dan memicu penolakan seketika dengan `Ukey2Alert(badPublicKey)`.
+- **Keputusan**: Mengimplementasikan `encodeBigEndianTwosComplement` (menyisipkan `0x00` jika `byte[0] >= 0x80`) pada pembentukan kunci publik keluar, serta `decodeBigEndianTwosComplementTo32Bytes` (menghapus `0x00` tanda dan melakukan padding jika < 32 bytes) saat memproses kunci publik masuk dari peer. Memperbaiki kebocoran continuation pada `NearbyBonjourServiceResolver` dengan retensi siklus hidup kuat hingga resolusi selesai.
+
 
 ---
 
-## 2. Hasil Analisis Pre-Mortem (Uji Kegagalan Produk)
+## 2. Analisis Pre-Mortem (Skenario Kegagalan 3 Bulan ke Depan)
 
-> **Skenario Pengujian**:  
-> *"Bayangkan 6 bulan setelah rilis, produk ini ditinggalkan oleh pengguna karena sering mengeluh 'Mac tidak bisa mendeteksi Samsung'. Apa akar penyebab yang paling mungkin, dan bagaimana kita memitigasinya sejak hari pertama?"*
+> **Uji Pre-Mortem**: *"Bayangkan 3 bulan dari sekarang aplikasi ini gagal memuaskan pengguna. Apa kemungkinan akar masalah terbesarnya?"*
 
-| Potensi Akar Masalah | Dampak Pengguna | Strategi Mitigasi Terintegrasi |
-| :--- | :--- | :--- |
-| **Batas Waktu 10 Menit Quick Share Samsung** | Pengguna lupa bahwa toggle "Everyone" otomatis mati setelah 10 menit. Akibatnya, Mac tidak bisa menemukan Samsung dan pengguna mengira aplikasi rusak. | **Mitigasi 1**: Menampilkan teks bantuan persisten di bagian bawah Radar UI: *"Pastikan Quick Share di Samsung aktif ke 'Everyone for 10 min'"*.<br>**Mitigasi 2**: Menggunakan `CBCentralManager` untuk mendeteksi sinyal BLE Samsung dan memberi petunjuk visual spesifik jika sinyal Bluetooth terdeteksi tetapi mDNS belum aktif. |
-| **AP / Client Isolation pada Router Publik** | Di hotel, kafe, atau kampus, router memblokir transmisi paket lokal antar perangkat. | **Mitigasi**: Menambahkan mesin diagnosa `NetworkHealthMonitor.swift` yang secara proaktif mendeteksi kegagalan soket TCP dan menampilkan kartu `FallbackGuideCard` yang memandu pengguna menyalakan Mobile Hotspot. |
-| **Pembaruan Protokol oleh Google/Samsung** | Google memperbarui spesifikasi protobuf atau TLS cipher pada Google Play Services. | **Mitigasi**: Memisahkan lapisan protokol (`DropCore/Protocol`) secara modular (*decoupled*) sehingga pembaruan schema framing dapat dirilis secara independen tanpa mengubah UI atau networking layer. |
+- **Akar Masalah Teridentifikasi**:
+  1. *AP Isolation pada Wi-Fi Publik*: Router memblokir koneksi TCP antar perangkat lokal, sehingga perangkat terdeteksi di radar tetapi transfer selalu timeout.
+  2. *Timeout Handshake karena Layar HP Mati*: Pengguna Samsung tidak membuka kunci layar, menyebabkan handshake UKEY2 terhenti di tengah jalan.
+- **Mitigasi Proaktif yang Diadopsi**:
+  1. *Connectivity Advisor*: Mesin pemantau soket TCP mendeteksi kegagalan jabat tangan dan langsung memunculkan panduan interaktif 2-langkah untuk mengaktifkan Mobile Hotspot Samsung atau USB-C Tethering.
+  2. *Interactive Guidance*: Dialog modal pengiriman menampilkan pengingat visual: *"Pastikan layar HP menyala dan kunci layar telah terbuka"*.
+
+---
+
+## 3. Alternatif yang Ditolak (Rejected Alternatives)
+
+| Alternatif | Alasan Penolakan |
+| :--- | :--- |
+| **Kustom BLE Peripheral Advertiser (Fast Pair `0xFE2C`)** | Ditolak karena Core Bluetooth macOS secara eksplisit melarang aplikasi non-Apple mengiklankan `CBAdvertisementDataServiceDataKey` tanpa entitlement privat. Memaksa ini akan menuntut penonaktifan SIP (System Integrity Protection) yang melanggar standar keamanan. |
+| **Instalasi Aplikasi Pendamping (Companion APK) di Android** | Ditolak karena bertentangan dengan visi produk: menghadirkan pengalaman AirDrop nirkabel murni tanpa membebani penerima dengan instalasi aplikasi tambahan. |
+| **Layanan Relay Cloud / WebSocket Eksternal** | Ditolak karena mengorbankan privasi pengguna, membutuhkan infrastruktur server berbayar, dan membatasi throughput transfer pada koneksi internet pengguna. |

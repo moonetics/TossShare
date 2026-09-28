@@ -27,11 +27,15 @@ let package = Package(
             targets: ["TossShareExtension"]
         )
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.28.2")
+    ],
     targets: [
         .target(
             name: "TossShareCore",
-            dependencies: [],
+            dependencies: [
+                .product(name: "SwiftProtobuf", package: "swift-protobuf")
+            ],
             path: "Sources/TossShareCore",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")

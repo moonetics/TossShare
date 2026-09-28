@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import TossShareCore
+import AppKit
 
 /// Popover ringkas dari status item menu bar macOS yang menyediakan area drop cepat dan status perangkat.
 public struct MenuBarPopoverView: View {
@@ -17,6 +18,9 @@ public struct MenuBarPopoverView: View {
     public var onOpenRadarWindow: (() -> Void)?
 
     @State private var isTargetedForDrop: Bool = false
+    @State private var hoveredEndpointId: String?
+    @State private var activeTransferSession: TransferSession?
+    @State private var activeSender: NearbySenderSession?
 
     public init(
         registry: DeviceRegistry,
@@ -38,6 +42,11 @@ public struct MenuBarPopoverView: View {
             // Area Drop Zone Cepat
             quickDropZoneSection
 
+            // Transfer Aktif (jika ada)
+            if let activeSession = activeTransferSession {
+                activeTransferProgressSection(session: activeSession)
+            }
+
             Divider()
 
             // Daftar Perangkat Sekitar
@@ -49,7 +58,7 @@ public struct MenuBarPopoverView: View {
             footerActions
         }
         .padding(Theme.Spacing.md)
-        .frame(width: 300)
+        .frame(width: 320)
     }
 
     // MARK: - Subviews
@@ -97,12 +106,44 @@ public struct MenuBarPopoverView: View {
                 )
         )
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargetedForDrop) { providers in
-            // Jika ada perangkat pertama, kirim ke perangkat tersebut
-            if let firstDevice = registry.devices.first {
-                return handleDroppedFile(providers: providers, targetDevice: firstDevice)
+            // Jika ada perangkat pertama/terdekat, kirim ke perangkat tersebut
+            if let target = registry.devices.first {
+                return handleDroppedFile(providers: providers, targetDevice: target)
             }
             return false
         }
+    }
+
+    private func activeTransferProgressSection(session: TransferSession) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(session.items.first?.fileName ?? "Berkas")
+                    .font(Theme.Typography.caption)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(session.state == .waitingAcceptance ? "Menunggu konfirmasi..." : "\(Int(session.progress * 100))%")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(session.state == .waitingAcceptance ? Theme.Colors.accentSamsung : .secondary)
+            }
+
+            ProgressView(value: session.progress)
+                .progressViewStyle(.linear)
+
+            if !session.authPin.isEmpty {
+                Text("PIN: \(session.authPin)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(Theme.Colors.accentSamsung)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radii.small)
+                .fill(Theme.Colors.surfaceCard)
+        )
+        .transition(.opacity)
     }
 
     private var nearbyDevicesSection: some View {
@@ -121,17 +162,24 @@ public struct MenuBarPopoverView: View {
                     Spacer()
                 }
             } else {
-                ForEach(registry.devices.prefix(3)) { device in
+                ForEach(registry.devices.prefix(4)) { device in
+                    let isHovered = hoveredEndpointId == device.endpointId
+                    let displayName = registry.displayName(for: device)
+
                     HStack(spacing: 8) {
                         Image(systemName: deviceIconName(for: device.deviceType))
                             .foregroundColor(Theme.Colors.accentAirDrop)
 
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(device.friendlyName)
+                            Text(displayName)
                                 .font(Theme.Typography.deviceTitle)
                                 .lineLimit(1)
 
-                            if let rssi = device.rssi {
+                            if device.isPrivacyMode {
+                                Text("Mode Privasi")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            } else if let rssi = device.rssi {
                                 Text("\(rssi) dBm")
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(.secondary)
@@ -140,33 +188,71 @@ public struct MenuBarPopoverView: View {
 
                         Spacer()
 
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                        Button {
+                            sendClipboardText(to: device)
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 12))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                        .help("Kirim Teks Clipboard ke \(displayName)")
                     }
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radii.small)
+                            .fill(isHovered ? Theme.Colors.accentSamsung.opacity(0.12) : Color.clear)
+                    )
+                    .onDrop(of: [UTType.fileURL.identifier], isTargeted: Binding(
+                        get: { hoveredEndpointId == device.endpointId },
+                        set: { isHovered in hoveredEndpointId = isHovered ? device.endpointId : nil }
+                    )) { providers in
+                        handleDroppedFile(providers: providers, targetDevice: device)
+                    }
                 }
             }
         }
     }
 
     private var footerActions: some View {
-        HStack {
-            Button {
-                onOpenRadarWindow?()
-            } label: {
-                Label("Buka Radar", systemImage: "dot.radiowaves.left.and.right")
+        VStack(spacing: 8) {
+            if let firstDevice = registry.devices.first {
+                let firstName = registry.displayName(for: firstDevice)
+                Button {
+                    sendClipboardText(to: firstDevice)
+                } label: {
+                    Label("Kirim Clipboard ke \(firstName)", systemImage: "doc.on.clipboard")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.Colors.accentAirDrop)
 
-            Spacer()
+            HStack {
+                Button {
+                    onOpenRadarWindow?()
+                } label: {
+                    Label("Buka Radar", systemImage: "dot.radiowaves.left.and.right")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Colors.accentAirDrop)
 
-            Button("Keluar") {
-                NSApplication.shared.terminate(nil)
+                Spacer()
+
+                Button("Keluar") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
             }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
+        }
+    }
+
+    private func sendClipboardText(to device: PeerDevice) {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        Task {
+            _ = try? await NearbySenderSession.sendClipboardText(text, to: device)
         }
     }
 
@@ -182,10 +268,81 @@ public struct MenuBarPopoverView: View {
     }
 
     private func handleDroppedFile(providers: [NSItemProvider], targetDevice: PeerDevice) -> Bool {
-        guard let provider = providers.first else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { _, _ in
-            Task { @MainActor in
-                TossShareHaptics.performDropSnapped()
+        guard !providers.isEmpty else { return false }
+
+        let group = DispatchGroup()
+        let collector = URLCollector()
+
+        for provider in providers {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                defer { group.leave() }
+                if let fileURL = url {
+                    collector.append(fileURL)
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            let flattened = FileItemCollector.flattenURLs(collector.getAll())
+            guard !flattened.isEmpty else { return }
+
+            TossShareHaptics.performDropSnapped()
+
+            let items = flattened.compactMap { fileURL -> TransferItem? in
+                let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.int64Value ?? 1024
+                return TransferItem(
+                    fileName: fileURL.lastPathComponent,
+                    mimeType: "application/octet-stream",
+                    fileSize: size,
+                    localURL: fileURL
+                )
+            }
+            guard !items.isEmpty else { return }
+
+            let sender = NearbySenderSession(peerEndpointId: targetDevice.endpointId, items: items)
+            self.activeSender = sender
+            self.activeTransferSession = sender.session
+
+            sender.onProgressUpdate = { session in
+                Task { @MainActor in
+                    self.activeTransferSession = session
+                }
+            }
+
+            sender.onStateChange = { session in
+                Task { @MainActor in
+                    self.activeTransferSession = session
+                    if session.state == .completed {
+                        TossShareHaptics.performSuccess()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            if self.activeTransferSession?.sessionId == session.sessionId {
+                                self.activeTransferSession = nil
+                                self.activeSender = nil
+                            }
+                        }
+                    } else if session.state == .failed {
+                        TossShareHaptics.performWarning()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            if self.activeTransferSession?.sessionId == session.sessionId {
+                                self.activeTransferSession = nil
+                                self.activeSender = nil
+                            }
+                        }
+                    }
+                }
+            }
+
+            Task {
+                do {
+                    try await sender.start(device: targetDevice)
+                } catch {
+                    Task { @MainActor in
+                        var failed = sender.session
+                        failed.fail(with: error.localizedDescription)
+                        self.activeTransferSession = failed
+                    }
+                }
             }
         }
         return true

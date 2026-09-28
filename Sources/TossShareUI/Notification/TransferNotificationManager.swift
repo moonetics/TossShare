@@ -41,6 +41,7 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
     private var activeSessions: [UUID: (session: TransferSession, device: PeerDevice)] = [:]
     private var completedFiles: [UUID: [URL]] = [:]
+    private var targetFolders: [UUID: URL] = [:]
     private var pendingContinuations: [UUID: CheckedContinuation<Bool, Never>] = [:]
 
     public var isBundleEnvironment: Bool {
@@ -199,12 +200,25 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
     }
 
     /// Menampilkan notifikasi transfer sukses dengan opsi buka di Finder.
-    public func postTransferSuccess(session: TransferSession, from device: PeerDevice, savedURLs: [URL]) {
+    public func postTransferSuccess(
+        session: TransferSession,
+        from device: PeerDevice,
+        savedURLs: [URL],
+        targetFolder: URL? = nil
+    ) {
         completedFiles[session.sessionId] = savedURLs
+        if let folder = targetFolder {
+            targetFolders[session.sessionId] = folder
+        }
+
+        let folderPath = targetFolder?.path ?? ""
+        let isFolder = targetFolder != nil
 
         guard isBundleEnvironment && isAuthorized else {
-            // Jika notifikasi dimatikan atau running bare CLI binary, buka Finder langsung bila ada file
-            if let first = savedURLs.first {
+            // Jika notifikasi dimatikan atau running bare CLI binary, buka Finder langsung
+            if let folder = targetFolder {
+                NSWorkspace.shared.open(folder)
+            } else if let first = savedURLs.first {
                 NSWorkspace.shared.activateFileViewerSelecting([first])
             }
             return
@@ -212,13 +226,25 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
 
         let content = UNMutableNotificationContent()
         content.title = "TossShare - Transfer Selesai"
-        let count = session.items.count
-        content.body = "\(count) berkas berhasil diterima dari \(device.friendlyName)."
+        let count = max(session.items.count, savedURLs.count)
+        if count == 1, let item = session.items.first {
+            content.body = "1 berkas '\(item.fileName)' berhasil diterima dari \(device.friendlyName)."
+        } else {
+            content.body = "\(count) berkas berhasil diterima dari \(device.friendlyName)."
+        }
         content.categoryIdentifier = TossShareNotificationCategory.transferSuccess
         content.sound = .default
-        content.userInfo = [
-            "sessionId": session.sessionId.uuidString
+
+        var info: [String: Any] = [
+            "sessionId": session.sessionId.uuidString,
+            "isFolder": isFolder
         ]
+        if !folderPath.isEmpty {
+            info["targetFolder"] = folderPath
+        } else if let firstURL = savedURLs.first {
+            info["targetFile"] = firstURL.path
+        }
+        content.userInfo = info
 
         let request = UNNotificationRequest(
             identifier: "success-\(session.sessionId.uuidString)",
@@ -273,6 +299,8 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
             return
         }
 
+        let targetFolderStr = userInfo["targetFolder"] as? String
+        let targetFileStr = userInfo["targetFile"] as? String
         let actionId = response.actionIdentifier
 
         await MainActor.run {
@@ -284,9 +312,24 @@ public final class TransferNotificationManager: NSObject, ObservableObject, UNUs
                 self.resolveDecision(sessionId: sessionId, accepted: false)
 
             case TossShareNotificationAction.showInFinder, UNNotificationDefaultActionIdentifier:
-                if let urls = self.completedFiles[sessionId], !urls.isEmpty {
+                if let folder = self.targetFolders[sessionId] {
+                    self.onShowInFinder?([folder])
+                    NSWorkspace.shared.open(folder)
+                } else if let folderStr = targetFolderStr,
+                          !folderStr.isEmpty,
+                          FileManager.default.fileExists(atPath: folderStr) {
+                    let folderURL = URL(fileURLWithPath: folderStr)
+                    self.onShowInFinder?([folderURL])
+                    NSWorkspace.shared.open(folderURL)
+                } else if let urls = self.completedFiles[sessionId], !urls.isEmpty {
                     self.onShowInFinder?(urls)
                     NSWorkspace.shared.activateFileViewerSelecting(urls)
+                } else if let fileStr = targetFileStr,
+                          !fileStr.isEmpty,
+                          FileManager.default.fileExists(atPath: fileStr) {
+                    let fileURL = URL(fileURLWithPath: fileStr)
+                    self.onShowInFinder?([fileURL])
+                    NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 } else if let downloadDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: downloadDir.path)
                 }
