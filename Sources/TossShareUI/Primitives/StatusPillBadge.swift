@@ -62,30 +62,47 @@ public enum StatusBadgeType: Sendable {
 /// Badge status kapsul glassmorphic dengan indikator titik berdenyut.
 public struct StatusPillBadge: View {
     public let type: StatusBadgeType
+    private let customTitle: String?
+    private let customColor: Color?
+    private let customPulse: Bool?
 
     @State private var isDotPulsing: Bool = false
 
     public init(type: StatusBadgeType) {
         self.type = type
+        self.customTitle = nil
+        self.customColor = nil
+        self.customPulse = nil
+    }
+
+    public init(text: String, style: StatusBadgeType = .ready, isPulsing: Bool? = nil) {
+        self.type = style
+        self.customTitle = text
+        self.customColor = style.tintColor
+        self.customPulse = isPulsing
     }
 
     public var body: some View {
+        let displayTitle = customTitle ?? type.title
+        let displayColor = customColor ?? type.tintColor
+        let isPulsingEnabled = customPulse ?? type.shouldPulse
+
         HStack(spacing: 6) {
             // Indikator Dot
             Circle()
-                .fill(type.tintColor)
+                .fill(displayColor)
                 .frame(width: 7, height: 7)
-                .scaleEffect(type.shouldPulse && isDotPulsing ? 1.35 : 1.0)
-                .opacity(type.shouldPulse && isDotPulsing ? 0.6 : 1.0)
+                .scaleEffect(isPulsingEnabled && isDotPulsing ? 1.35 : 1.0)
+                .opacity(isPulsingEnabled && isDotPulsing ? 0.6 : 1.0)
                 .animation(
-                    type.shouldPulse
+                    isPulsingEnabled
                         ? Animation.easeInOut(duration: 0.9).repeatForever(autoreverses: true)
                         : .default,
                     value: isDotPulsing
                 )
 
             // Label Status
-            Text(type.title)
+            Text(displayTitle)
                 .font(Theme.Typography.caption)
                 .foregroundColor(.primary)
         }
@@ -96,11 +113,11 @@ public struct StatusPillBadge: View {
                 .fill(.ultraThinMaterial)
                 .overlay(
                     Capsule()
-                        .strokeBorder(type.tintColor.opacity(0.35), lineWidth: 1)
+                        .strokeBorder(displayColor.opacity(0.35), lineWidth: 1)
                 )
         )
         .onAppear {
-            if type.shouldPulse {
+            if isPulsingEnabled {
                 isDotPulsing = true
             }
         }

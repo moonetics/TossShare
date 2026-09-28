@@ -41,6 +41,13 @@ public enum Theme {
         // Permukaan & Border Glassmorphic
         public static let borderHairline = Color.primary.opacity(0.12)
         public static let borderGlow = samsungCyan.opacity(0.4)
+
+        // Aliases
+        public static let accentAirDrop = airDropBlue
+        public static let accentSamsung = samsungCyan
+        public static let brandGradient = gradientBrand
+        public static let borderSubtle = borderHairline
+        public static let surfaceCard = Color(nsColor: .windowBackgroundColor)
     }
 
     // MARK: - Typography Tokens
@@ -71,6 +78,7 @@ public enum Theme {
         public static let button: CGFloat = 8
         public static let card: CGFloat = 14
         public static let avatar: CGFloat = 28
+        public static let sheet: CGFloat = 18
         public static let pill: CGFloat = 999
     }
 
